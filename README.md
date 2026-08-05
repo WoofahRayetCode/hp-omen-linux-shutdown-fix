@@ -63,6 +63,8 @@ This repo includes `autounattend.xml` for an unattended Windows 11 IoT Enterpris
 ### Using it with Ventoy
 
 1. Get a legitimate **Windows 11 IoT Enterprise LTSC** ISO.
+   - The ISO used when this was written was `en-us_windows_11_iot_enterprise_ltsc_2024_x64_dvd_f6b14814.iso`.
+   - Newer releases may have different filenames; use whatever filename your legitimate download gives you.
 2. Copy the ISO, `autounattend.xml`, and the setup scripts to the root of your Ventoy data partition.
 
    Files to place on Ventoy:
