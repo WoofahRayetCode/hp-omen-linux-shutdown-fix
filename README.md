@@ -59,6 +59,7 @@ This repo includes `autounattend.xml` for an unattended Windows 11 IoT Enterpris
 - Rest of the disk left unallocated for Linux
 - Built-in Administrator account enabled
 - OOBE, privacy, and online account prompts skipped
+- **Fast Startup disabled** so Windows fully shuts down and dual-boot is more reliable
 
 ### Using it with Ventoy
 
