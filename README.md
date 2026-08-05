@@ -9,7 +9,7 @@ The goal is simple: when you shut down from Linux, the laptop reboots into Windo
 
 ## Why this exists
 
-Some HP OMEN laptops do not fully power off when Linux shuts down. The screen goes dark, but the machine may stay warm or keep draining battery. Windows shuts down normally, so this workaround uses Windows as the final step.
+Some HP OMEN laptops do not fully power off when Linux shuts down. The screen goes dark, but the machine may stay warm or keep draining battery. Windows shuts down normally, so this workaround routes shutdown through Windows to get a clean S5 power-off.
 
 ## How it works
 
@@ -42,6 +42,7 @@ The Linux installer auto-detects the rEFInd binary path used by Fedora/Nobara (`
 | `install-linux.sh` | Set up the Linux side |
 | `install-windows.ps1` | Set up the Windows side and fix the hardware clock timezone |
 | `autounattend.xml` | Unattended Windows install with 2 GB EFI partition |
+| `ventoy/` | Helper folder for easy Ventoy USB copy/paste |
 | `C:\omen-clean-shutdown.bat` | Windows startup handler |
 | `/usr/local/bin/omen-clean-shutdown-launcher` | Linux shortcut target |
 | `/usr/local/bin/omen-clean-shutdown.sh` | Linux shutdown logic |
@@ -82,6 +83,27 @@ This repo includes `autounattend.xml` for an unattended Windows 11 IoT Enterpris
 6. After installing Linux, run `sudo bash install-linux.sh` from the Ventoy drive.
 
 The default Administrator password in the file is `password`. Edit `autounattend.xml` before using it.
+
+### Easy Ventoy copy-paste folder
+
+If you want a simpler layout to copy onto the Ventoy USB, use the contents of the `ventoy/` folder in this repo:
+
+- `ventoy/ventoy.json` goes to `/ventoy/ventoy.json` on the Ventoy data partition
+- `ventoy/autounattend.xml` goes to the root of the Ventoy data partition as `autounattend.xml`
+- `ventoy/README.txt` explains the layout
+
+Recommended USB layout:
+
+```text
+ROOT OF VENTOY DATA PARTITION
+├─ Windows ISO
+├─ Linux ISO
+├─ autounattend.xml
+├─ install-windows.ps1
+├─ install-linux.sh
+└─ ventoy/
+   └─ ventoy.json
+```
 
 ## Install
 
