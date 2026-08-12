@@ -54,7 +54,8 @@ The Linux installer auto-detects the rEFInd binary path used by Fedora/Nobara (`
 |---|---|
 | `install-linux.sh` | Set up the Linux side (secondary drive) |
 | `install-windows.ps1` | Set up the Windows side (primary drive) and fix the hardware clock timezone |
-| `C:\omen-clean-shutdown.bat` | Windows startup handler |
+| `C:\omen-clean-shutdown.ps1` | Windows startup handler script (with dynamic EFI volume discovery) |
+| `C:\omen-clean-shutdown.bat` | Legacy batch wrapper executing PowerShell script |
 | `/usr/local/bin/omen-clean-shutdown-launcher` | Linux shortcut target |
 | `/usr/local/bin/omen-clean-shutdown.sh` | Linux shutdown logic |
 | `/usr/local/bin/refind-protect.sh` | Restores rEFInd if Windows overwrites the boot manager |
@@ -171,8 +172,8 @@ You can override paths before running `install-linux.sh`:
 
 Both OS installers set up automated self-healing mechanisms to protect rEFInd:
 
-- **Windows Self-Healing (`C:\omen-clean-shutdown.bat`)**: Runs as a `SYSTEM` startup task on every Windows boot (configured to run on both AC and Battery power).
-  - Retries mounting the EFI partition up to 5 times (2 seconds apart) to handle early boot timing when the storage service is initializing.
+- **Windows Self-Healing (`C:\omen-clean-shutdown.ps1`)**: Runs as a `SYSTEM` startup task on every Windows boot (configured to run on both AC and Battery power).
+  - Dynamically detects the EFI System Partition containing `refind.conf` across pre-mounted drive letters (e.g. `S:`) before attempting temporary `B:` mounting.
   - Checks if a Windows Update overwrote `bootmgfw.efi` (file size > 1MB) and restores `refind_x64.efi`.
   - Checks if `refind.conf` has `timeout -1` left over from an interrupted shutdown and restores your configured timeout (or defaults to `timeout 0`).
   - Automatically heals and cleans up orphaned flag files or stuck timeouts on normal startup.
