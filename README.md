@@ -22,14 +22,15 @@ Some HP OMEN laptops do not fully power off when Linux shuts down. The screen go
 ## How it works
 
 1. You trigger the shutdown from Linux (OMEN AI/Copilot key, shortcut, or terminal).
-2. The Linux script saves the current rEFInd `default_selection`, sets it to `"Windows"`, and sets `timeout -1` so rEFInd boots Windows immediately.
+2. The Linux script saves the current rEFInd `default_selection` and `timeout`, sets `default_selection "Windows"` and `timeout -1` so rEFInd boots Windows immediately during the automated shutdown cycle.
 3. The script creates a flag file on the shared EFI partition and reboots.
-4. Windows starts from the primary drive. A scheduled task running as `SYSTEM` sees the flag, restores the saved rEFInd default, deletes the flag, and shuts Windows down.
-5. The laptop is now fully off. Next power-on boots back into Linux on the secondary drive normally.
+4. Windows starts from the primary drive. A scheduled task running as `SYSTEM` sees the flag, restores the saved rEFInd default and timeout (`timeout 0` for persistent interactive boot menu), deletes the flag, and shuts Windows down.
+5. The laptop is now fully off. Next power-on boots back into the interactive rEFInd boot menu normally.
 
-### Reboot Behavior
+### Reboot & Boot Menu Behavior
 
-Performing a standard **Restart** (from either Windows or Linux) will bring up the **rEFInd boot menu** normally. You do not need to do a full shutdown and manual power-on to switch operating systems when restarting. The automated Windows shutdown sequence is only triggered when initiating a clean shutdown from Linux.
+* **rEFInd Menu Persistence (`timeout 0`)**: Restoring `timeout 0` ensures that the rEFInd graphical boot menu displays indefinitely on normal power-on or reboot until an OS option is chosen.
+* **Standard Restarts**: Performing a standard **Restart** (from either Windows or Linux) will bring up the **rEFInd boot menu** normally. You do not need to do a full shutdown and manual power-on to switch operating systems when restarting. The automated Windows shutdown sequence is only triggered when initiating a clean shutdown from Linux.
 
 ## Requirements
 
