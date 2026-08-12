@@ -88,14 +88,28 @@ powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "& {
             $c = $c -replace '(?m)^[ \t]*default_selection[ \t]+.*$', 'default_selection "Linux,vmlinuz"'
         }
 
-        # 2. Restore timeout (ensure it is NEVER stuck at -1; default to timeout 0 for interactive boot menu)
+        # 2. Restore timeout (rEFInd config: 'timeout 0' or 'timeout 0' means wait indefinitely for user choice)
+        # Note: In rEFInd, 'timeout 0' disables auto-boot timeout and keeps menu up until user chooses an OS option.
         $timeoutVal = 'timeout 0'
         if (Test-Path $restoreTimeout) {
             $t = (Get-Content $restoreTimeout -Raw).Trim()
             Remove-Item -Force $restoreTimeout -ErrorAction SilentlyContinue
-            if ($t -match '^timeout[ \t]+') { $timeoutVal = $t } else { $timeoutVal = "timeout $t" }
+            if ($t -match '^timeout[ \t]+') { 
+                $timeoutVal = $t 
+            } else { 
+                $timeoutVal = "timeout $t" 
+            }
         }
-        $c = $c -replace '(?m)^[ \t]*timeout[ \t]+.*$', $timeoutVal
+        # If timeout was -1 or invalid, force timeout 0 so menu never autoboots
+        if ($timeoutVal -match '-1') {
+            $timeoutVal = 'timeout 0'
+        }
+
+        if ($c -match '(?m)^[ \t]*timeout[ \t]+') {
+            $c = $c -replace '(?m)^[ \t]*timeout[ \t]+.*$', $timeoutVal
+        } else {
+            $c = $c + "`n$timeoutVal`n"
+        }
         [System.IO.File]::WriteAllText($confPath, $c)
     }
 
