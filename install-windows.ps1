@@ -49,6 +49,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "^
     $conf = 'B:\EFI\Microsoft\Boot\refind.conf'; ^
     if (-not (Test-Path $conf)) { $conf = 'B:\EFI\refind\refind.conf' }; ^
     $restore = 'B:\EFI\refind\default_selection_restore'; ^
+    $restoreTimeout = 'B:\EFI\refind\default_selection_restore_timeout'; ^
     if (Test-Path $flag) { ^
         Remove-Item -Force $flag; ^
         if (Test-Path $conf) { ^
@@ -61,7 +62,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "^
             } else { ^
                 $c = $c -replace '(?m)^[ \t]*default_selection[ \t]+.*$', 'default_selection \"Linux,vmlinuz\"' ^
             }; ^
-            $c = $c -replace '(?m)^[ \t]*timeout[ \t]+.*$', 'timeout 10'; ^
+            $timeoutVal = 'timeout 10'; ^
+            if (Test-Path $restoreTimeout) { ^
+                $t = (Get-Content $restoreTimeout -Raw).Trim(); ^
+                Remove-Item -Force $restoreTimeout; ^
+                if ($t -match '^timeout[ \t]+') { $timeoutVal = $t } else { $timeoutVal = \"timeout `$t\" } ^
+            }; ^
+            $c = $c -replace '(?m)^[ \t]*timeout[ \t]+.*$', $timeoutVal; ^
             [System.IO.File]::WriteAllText($conf, $c) ^
         }; ^
         mountvol %EFI% /D; ^
@@ -84,7 +91,7 @@ Write-Info "Creating startup task..."
 $action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '/c "C:\omen-clean-shutdown.bat"'
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 
