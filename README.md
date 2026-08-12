@@ -197,6 +197,14 @@ If restarting or powering on boots straight into Windows without showing the rEF
      bcdedit /set {fwbootmgr} displayorder {bootmgr} /addfirst
      ```
 
+### Windows Stays on Login / PIN Screen
+- **Does a PIN code block shutdown?** No. The Windows task runs under the `SYSTEM` background account on startup before user login.
+- **Testing the Windows Task:** You can manually verify that the Windows scheduled task is working by running this command in PowerShell (Admin) and then restarting:
+  ```powershell
+  mountvol B: /S; New-Item -Path "B:\EFI\refind\shutdown_flag" -ItemType File -Force; mountvol B: /D
+  ```
+  Upon rebooting into Windows, rEFInd will automatically hide its menu (`timeout -1`) and Windows will power down within 5 seconds at the PIN screen.
+
 ---
 
 ## Notes
