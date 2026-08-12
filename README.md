@@ -1,11 +1,19 @@
-# HP OMEN Linux Clean Shutdown Fix
+# HP OMEN Linux Clean Shutdown Fix (Dual-Drive Setup)
 
 This repo packages the HP OMEN shutdown workaround into two scripts:
 
-- `install-linux.sh` for Nobara/Fedora, CachyOS, Arch, and other systemd-based distros
-- `install-windows.ps1` for Windows
+- `install-linux.sh` for Nobara/Fedora, CachyOS, Arch, and other systemd-based distros running on the secondary drive
+- `install-windows.ps1` for Windows running on the primary drive
 
 The goal is simple: when you shut down from Linux, the laptop reboots into Windows first, Windows finishes the power-off correctly, and the machine ends up fully off.
+
+## Dual-Drive Architecture
+
+This setup is optimized for dual-disk laptop configurations:
+- **Primary Drive (Disk 0)**: Windows 11 installation and primary UEFI System Partition (ESP) containing rEFInd / Windows Boot Manager.
+- **Secondary Drive (Disk 1)**: Linux installation (Nobara/Fedora, Arch, CachyOS, etc.) with root `/` and swap/data partitions.
+
+Having Linux on a secondary drive with Windows on the primary drive keeps drive management simple and isolates OS updates while sharing the primary EFI partition for rEFInd boot management.
 
 ## Why this exists
 
@@ -15,16 +23,16 @@ Some HP OMEN laptops do not fully power off when Linux shuts down. The screen go
 
 1. You trigger the shutdown from Linux (OMEN AI/Copilot key, shortcut, or terminal).
 2. The Linux script saves the current rEFInd `default_selection`, sets it to `"Windows"`, and sets `timeout -1` so rEFInd boots Windows immediately.
-3. The script creates a flag file on the EFI partition and reboots.
-4. Windows starts. A scheduled task running as `SYSTEM` sees the flag, restores the saved rEFInd default, deletes the flag, and shuts Windows down.
-5. The laptop is now fully off. Next power-on boots back into Linux normally.
+3. The script creates a flag file on the shared EFI partition and reboots.
+4. Windows starts from the primary drive. A scheduled task running as `SYSTEM` sees the flag, restores the saved rEFInd default, deletes the flag, and shuts Windows down.
+5. The laptop is now fully off. Next power-on boots back into Linux on the secondary drive normally.
 
 ## Requirements
 
 - UEFI firmware with **Secure Boot disabled**
-- **rEFInd** installed as the boot manager
+- Dual-drive setup: Windows installed on **Primary Drive (Disk 0)**, Linux on **Secondary Drive (Disk 1)**
+- **rEFInd** installed as the boot manager on the primary EFI partition
 - Linux using **systemd**
-- Windows on the same machine
 
 ## Supported Linux distros
 
@@ -39,55 +47,18 @@ The Linux installer auto-detects the rEFInd binary path used by Fedora/Nobara (`
 
 | File | Purpose |
 |---|---|
-| `install-linux.sh` | Set up the Linux side |
-| `install-windows.ps1` | Set up the Windows side and fix the hardware clock timezone |
-| `autounattend.xml` | Unattended Windows install with 2 GB EFI partition |
+| `install-linux.sh` | Set up the Linux side (secondary drive) |
+| `install-windows.ps1` | Set up the Windows side (primary drive) and fix the hardware clock timezone |
 | `C:\omen-clean-shutdown.bat` | Windows startup handler |
 | `/usr/local/bin/omen-clean-shutdown-launcher` | Linux shortcut target |
 | `/usr/local/bin/omen-clean-shutdown.sh` | Linux shutdown logic |
 | `/usr/local/bin/refind-protect.sh` | Restores rEFInd if Windows overwrites the boot manager |
 
-## Clean Windows install with a 2 GB EFI partition (optional)
+## Installation Guide
 
-Some Linux installers (including CachyOS) warn or fail if the EFI system partition is smaller than 2048 MB. A fresh Windows install is the cleanest way to create a 2 GB EFI partition.
+Do the Windows side first on your primary drive, then the Linux side on your secondary drive.
 
-This repo includes `autounattend.xml` for an unattended Windows 11 IoT Enterprise LTSC install with:
-
-- **2048 MB EFI partition**
-- **16 MB MSR partition**
-- **50 GB Windows partition**
-- Rest of the disk left unallocated for Linux
-- Built-in Administrator account enabled
-- OOBE, privacy, and online account prompts skipped
-- **Fast Startup disabled** so Windows fully shuts down and dual-boot is more reliable
-
-### Using it with Ventoy
-
-1. Get a legitimate **Windows 11 IoT Enterprise LTSC** ISO.
-   - The ISO used when this was written was `en-us_windows_11_iot_enterprise_ltsc_2024_x64_dvd_f6b14814.iso`.
-   - Newer releases may have different filenames; use whatever filename your legitimate download gives you.
-2. Copy the ISO, `autounattend.xml`, and the setup scripts to the root of your Ventoy data partition.
-
-   Files to place on Ventoy:
-   - `en-us_windows_11_iot_enterprise_ltsc_2024_x64_dvd_f6b14814.iso` (or your LTSC ISO)
-   - `cachyos-desktop-linux-260628.iso` (or your preferred Linux ISO)
-   - `autounattend.xml`
-   - `install-windows.ps1`
-   - `install-linux.sh`
-   - `README.md`
-
-3. Boot the Ventoy USB and select the Windows ISO.
-4. Ventoy will automatically use `autounattend.xml` and install Windows with the partition layout above.
-5. After Windows boots, run `install-windows.ps1` as Administrator from the Ventoy drive.
-6. After installing Linux, run `sudo bash install-linux.sh` from the Ventoy drive.
-
-The default Administrator password in the file is `password`. Edit `autounattend.xml` before using it.
-
-## Install
-
-Do the Windows side first, then the Linux side. That lets you verify the startup task before you wire the Linux shortcut.
-
-### 1. On Windows
+### 1. On Windows (Primary Drive - Disk 0)
 
 Open PowerShell as Administrator in this folder and run:
 
@@ -96,9 +67,9 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\install-windows.ps1
 ```
 
-This also sets the `RealTimeIsUniversal` registry key so Windows treats the hardware clock as UTC, preventing the common Windows/Linux time mismatch after dual-booting.
+This sets up the `OMEN Clean Shutdown` startup task and configures the `RealTimeIsUniversal` registry key so Windows treats the hardware clock as UTC, preventing time drift when dual-booting between Windows and Linux.
 
-### 2. On Linux
+### 2. On Linux (Secondary Drive - Disk 1)
 
 Install rEFInd first if it is not already installed:
 
@@ -118,7 +89,7 @@ Then run the Linux installer. The script auto-mounts the EFI partition at `/boot
 sudo bash ./install-linux.sh
 ```
 
-If the script lives on a mounted Windows drive, you can run it from there:
+If the script lives on a mounted Windows drive/partition, you can run it directly:
 
 ```bash
 cd /mnt/windows/Users/ericp/OneDrive/Documents/GitHub/hp-omen-linux-shutdown-fix
@@ -169,3 +140,4 @@ You can override paths before running `install-linux.sh`:
 - The OMEN AI/Copilot key usually appears as `XF86Launch2` on Linux, but the installer will try to detect `KEY_PROG1` through `KEY_PROG4` first.
 - The EFI paths used here match the OMEN layout from the original guide; if your machine uses different paths, adjust the scripts or set the environment variables above.
 - This workaround relies on rEFInd. It will not work with Limine, GRUB, or systemd-boot without significant changes.
+
