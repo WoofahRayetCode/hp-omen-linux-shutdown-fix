@@ -173,7 +173,7 @@ Both OS installers set up automated self-healing mechanisms to protect rEFInd:
 - **Windows Self-Healing (`C:\omen-clean-shutdown.bat`)**: Runs as a `SYSTEM` startup task on every Windows boot (configured to run on both AC and Battery power).
   - Checks if a Windows Update overwrote `bootmgfw.efi` (file size > 1MB) and restores `refind_x64.efi`.
   - Checks if `refind.conf` has `timeout -1` left over from an interrupted shutdown and restores your configured timeout (or defaults to `timeout 10`).
-- **Linux Self-Healing (`refind-protect.service`)**: Runs at boot via systemd to detect if Windows replaced `bootmgfw.efi` and restores `refind_x64.efi`.
+  - Automatically heals and cleans up orphaned flag files or stuck timeouts on normal startup.
 
 ## Troubleshooting
 
@@ -181,12 +181,15 @@ Both OS installers set up automated self-healing mechanisms to protect rEFInd:
 
 If restarting or powering on boots straight into Windows without showing the rEFInd menu:
 
-1. **Disable Fast Startup**:
-   - Open **Control Panel** $\rightarrow$ **Power Options** $\rightarrow$ **Choose what the power buttons do**.
-   - Click **Change settings that are currently unavailable**.
-   - Uncheck **Turn on fast startup**.
-2. **Re-run the Windows script**:
-   - Open PowerShell as Administrator and run `.\install-windows.ps1` to re-trigger the self-healing fix.
+1. **Disable Fast Startup & Hibernation**:
+   - Fast Startup causes Windows to save kernel state to `hiberfil.sys` and bypass UEFI/rEFInd on boot.
+   - Run PowerShell as Administrator and execute:
+     ```powershell
+     powercfg /h off
+     ```
+   - This removes `hiberfil.sys` and forces a true, clean shutdown so rEFInd loads every time.
+2. **Re-run the Windows installer**:
+   - Open PowerShell as Administrator and run `.\install-windows.ps1` to re-trigger self-healing and task updates.
 3. **Verify BIOS / NVRAM Boot Order**:
    - In PowerShell (Admin), check your boot menu entries:
      ```powershell
@@ -203,7 +206,7 @@ If restarting or powering on boots straight into Windows without showing the rEF
   ```powershell
   mountvol B: /S; New-Item -Path "B:\EFI\refind\shutdown_flag" -ItemType File -Force; mountvol B: /D
   ```
-  Upon rebooting into Windows, rEFInd will automatically hide its menu (`timeout -1`) and Windows will power down within 5 seconds at the PIN screen.
+  Upon rebooting into Windows, rEFInd will automatically hide its menu (`timeout -1`) and Windows will power down within 7 seconds at the PIN screen.
 
 ---
 
@@ -211,11 +214,9 @@ If restarting or powering on boots straight into Windows without showing the rEF
 
 - This is a workaround, not a firmware fix.
 - **Battery Care / 80% Charge Limit:** HP's 80% battery limit / battery care mode in BIOS/OMEN Gaming Hub works cleanly alongside this workaround. The scheduled task is configured to run on both battery and AC power (`AllowStartIfOnBatteries`).
-- **Timeout & Selection Preservation:** The shutdown script saves your current rEFInd menu timeout and default OS selection before temporarily forcing `timeout -1` and `default_selection "Windows"` for the reboot, and restores both exact settings on the Windows side.
-- **Windows Fast Startup & Hibernation Auto-Disabling**: Fast Startup and Hibernation are automatically disabled by `install-windows.ps1` (`powercfg /h off` and `HiberbootEnabled = 0`) to prevent Windows from saving kernel/app session states to disk, which often causes hangs during pre-boot initialization.
+- **Timeout & Selection Preservation:** The shutdown script saves your current rEFInd menu timeout and default OS selection before temporarily setting `timeout -1` and `default_selection "Windows"` for the reboot, and restores both exact settings on the Windows side.
+- **Windows Fast Startup & Hibernation Disabling (`hiberfil.sys`)**: Fast Startup and Hibernation are automatically disabled by `install-windows.ps1` (`powercfg /h off` and `HiberbootEnabled = 0`). Removing `hiberfil.sys` prevents Windows from skipping the rEFInd UEFI boot loader upon cold boot.
 - **Pre-login App Launch Prevention**: The installer configures `UserDeviceSignIn = 0` to block Windows 10/11 from pre-loading user startup programs in the background before user logon. This ensures background services don't stall the automated 5-second shutdown window.
 - The OMEN AI/Copilot key usually appears as `XF86Launch2` on Linux, but the installer will try to detect `KEY_PROG1` through `KEY_PROG4` first.
 - The EFI paths used here match the OMEN layout from the original guide; if your machine uses different paths, adjust the scripts or set the environment variables above.
 - This workaround relies on rEFInd. It will not work with Limine, GRUB, or systemd-boot without significant changes.
-
-
