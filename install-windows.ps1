@@ -35,7 +35,7 @@ set "EFI=B:"
 mountvol %EFI% /S
 if exist "%EFI%\EFI\refind\shutdown_flag" (
     del "%EFI%\EFI\refind\shutdown_flag"
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "$p='B:\EFI\Microsoft\Boot\refind.conf'; $r='B:\EFI\refind\default_selection_restore'; $c=Get-Content $p -Raw; if (Test-Path $r) { $s=(Get-Content $r -Raw).Trim(); $c=$c -replace '^default_selection .+',$s; Remove-Item $r } else { $c=$c -replace '^default_selection .*','default_selection ""Fedora""' }; $c=$c -replace '^timeout .*','timeout 10'; Set-Content -Encoding ASCII -Path $p -Value $c"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$p='B:\EFI\Microsoft\Boot\refind.conf'; if (-not (Test-Path $p)) { $p='B:\EFI\refind\refind.conf' }; $r='B:\EFI\refind\default_selection_restore'; $c=Get-Content $p -Raw; if (Test-Path $r) { $s=(Get-Content $r -Raw).Trim(); $c=$c -replace '^default_selection .+',$s; Remove-Item $r } else { $c=$c -replace '^default_selection .*','default_selection ""Linux,vmlinuz""' }; $c=$c -replace '^timeout .*','timeout 10'; Set-Content -Encoding ASCII -Path $p -Value $c"
     mountvol %EFI% /D
     shutdown /s /t 5
 ) else (
@@ -60,4 +60,5 @@ Write-Info 'Installed.'
 Write-Host ''
 Write-Host 'Task name: OMEN Clean Shutdown'
 Write-Host 'Batch file: C:\omen-clean-shutdown.bat'
+Write-Host 'Configured for Windows on primary drive (Disk 0) and Linux on secondary drive (Disk 1).'
 Write-Host 'Use the task as part of the Linux shutdown flow described in the README.'
