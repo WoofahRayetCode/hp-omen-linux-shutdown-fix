@@ -96,16 +96,44 @@ cd /mnt/windows/Users/ericp/OneDrive/Documents/GitHub/hp-omen-linux-shutdown-fix
 sudo bash ./install-linux.sh
 ```
 
-## Use
+## Use & OMEN Button Shortcut Setup
 
-Bind your AI key or another shortcut to:
+### Automatic Setup (During Installation)
+
+When running `sudo bash ./install-linux.sh`, the installer will attempt to auto-detect your OMEN / Copilot button:
+
+1. The installer prompts: `Press Enter, then press the Copilot/AI button once within 8 seconds.`
+2. Press **Enter** in your terminal, then immediately press the **OMEN key** on your laptop.
+3. The script detects the key press and configures the shortcut automatically for **GNOME** or **KDE Plasma**.
+
+### Manual Setup
+
+If auto-detection fails or you prefer to configure it manually, bind your OMEN key (or custom hotkey) to launch:
 
 ```bash
 /usr/local/bin/omen-clean-shutdown-launcher
 ```
 
-On GNOME, add it in Settings as a custom shortcut. The launcher uses `sudo` and the installer adds the sudo rule for the command it needs.
-If you are on GNOME, the Linux installer will ask you to press the button once and will try to bind it automatically. If detection fails, it falls back to `XF86Launch2`.
+#### On GNOME:
+1. Open **Settings** → **Keyboard** → **Keyboard Shortcuts** (at the bottom).
+2. Scroll to the bottom and click **Custom Shortcuts (+)**.
+3. Set the fields to:
+   - **Name:** `OMEN Clean Shutdown`
+   - **Command:** `/usr/local/bin/omen-clean-shutdown-launcher`
+   - **Shortcut:** Press the **OMEN key** (or desired key combination).
+
+#### On KDE Plasma:
+1. Open **System Settings** → **Shortcuts**.
+2. Select **Custom Shortcuts** (or **Command/URL**).
+3. Add a new Global Shortcut:
+   - **Trigger:** Press the **OMEN key**.
+   - **Action:** `/usr/local/bin/omen-clean-shutdown-launcher`
+
+---
+
+### Confirmation Dialog
+
+When triggered via the OMEN key or shortcut, a popup dialog (`kdialog`, `zenity`, or `yad`) will ask for confirmation before initiating the shutdown process to prevent accidental keypresses.
 
 ## Remove
 
@@ -137,7 +165,9 @@ You can override paths before running `install-linux.sh`:
 ## Notes
 
 - This is a workaround, not a firmware fix.
+- **Windows Fast Startup**: Fast Startup must be disabled in Windows (`Control Panel` -> `Power Options` -> `Choose what the power buttons do` -> uncheck `Turn on fast startup`) so that startup tasks run properly on boot.
 - The OMEN AI/Copilot key usually appears as `XF86Launch2` on Linux, but the installer will try to detect `KEY_PROG1` through `KEY_PROG4` first.
 - The EFI paths used here match the OMEN layout from the original guide; if your machine uses different paths, adjust the scripts or set the environment variables above.
 - This workaround relies on rEFInd. It will not work with Limine, GRUB, or systemd-boot without significant changes.
+
 
