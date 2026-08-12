@@ -172,8 +172,9 @@ You can override paths before running `install-linux.sh`:
 Both OS installers set up automated self-healing mechanisms to protect rEFInd:
 
 - **Windows Self-Healing (`C:\omen-clean-shutdown.bat`)**: Runs as a `SYSTEM` startup task on every Windows boot (configured to run on both AC and Battery power).
+  - Retries mounting the EFI partition up to 5 times (2 seconds apart) to handle early boot timing when the storage service is initializing.
   - Checks if a Windows Update overwrote `bootmgfw.efi` (file size > 1MB) and restores `refind_x64.efi`.
-  - Checks if `refind.conf` has `timeout -1` left over from an interrupted shutdown and restores your configured timeout (or defaults to `timeout 10`).
+  - Checks if `refind.conf` has `timeout -1` left over from an interrupted shutdown and restores your configured timeout (or defaults to `timeout 0`).
   - Automatically heals and cleans up orphaned flag files or stuck timeouts on normal startup.
 
 ## Troubleshooting
@@ -207,7 +208,7 @@ If restarting or powering on boots straight into Windows without showing the rEF
   ```powershell
   mountvol B: /S; New-Item -Path "B:\EFI\refind\shutdown_flag" -ItemType File -Force; mountvol B: /D
   ```
-  Upon rebooting into Windows, rEFInd will automatically hide its menu (`timeout -1`) and Windows will power down within 7 seconds at the PIN screen.
+  Upon rebooting into Windows, rEFInd will automatically hide its menu (`timeout -1`) and Windows will power down within 3 seconds at the PIN screen.
 
 ---
 
@@ -217,7 +218,7 @@ If restarting or powering on boots straight into Windows without showing the rEF
 - **Battery Care / 80% Charge Limit:** HP's 80% battery limit / battery care mode in BIOS/OMEN Gaming Hub works cleanly alongside this workaround. The scheduled task is configured to run on both battery and AC power (`AllowStartIfOnBatteries`).
 - **Timeout & Selection Preservation:** The shutdown script saves your current rEFInd menu timeout and default OS selection before temporarily setting `timeout -1` and `default_selection "Windows"` for the reboot, and restores both exact settings on the Windows side.
 - **Windows Fast Startup & Hibernation Disabling (`hiberfil.sys`)**: Fast Startup and Hibernation are automatically disabled by `install-windows.ps1` (`powercfg /h off` and `HiberbootEnabled = 0`). Removing `hiberfil.sys` prevents Windows from skipping the rEFInd UEFI boot loader upon cold boot.
-- **Pre-login App Launch Prevention**: The installer configures `UserDeviceSignIn = 0` to block Windows 10/11 from pre-loading user startup programs in the background before user logon. This ensures background services don't stall the automated 5-second shutdown window.
+- **Pre-login App Launch Prevention**: The installer configures `UserDeviceSignIn = 0` to block Windows 10/11 from pre-loading user startup programs in the background before user logon. This ensures background services don't stall the automated 3-second shutdown window.
 - **BTRFS Filesystem (CachyOS) & Windows Compatibility:** 
   - The shutdown workaround does **not** require any BTRFS drivers in Windows, as all cross-OS communication uses the standard FAT32 EFI System Partition (ESP).
   - If you wish to access your CachyOS BTRFS files directly from Windows for general file sharing, you can optionally install [WinBtrfs](https://github.com/maarmato/winbtrfs). 
