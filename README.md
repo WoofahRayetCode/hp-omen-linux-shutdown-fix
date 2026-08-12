@@ -29,8 +29,8 @@ Some HP OMEN laptops do not fully power off when Linux shuts down. The screen go
 
 ### Reboot & Boot Menu Behavior
 
-* **rEFInd Menu Persistence (`timeout 0`)**: Restoring `timeout 0` ensures that the rEFInd graphical boot menu displays indefinitely on normal power-on or reboot until an OS option is chosen.
-* **Standard Restarts**: Performing a standard **Restart** (from either Windows or Linux) will bring up the **rEFInd boot menu** normally. You do not need to do a full shutdown and manual power-on to switch operating systems when restarting. The automated Windows shutdown sequence is only triggered when initiating a clean shutdown from Linux.
+* **rEFInd Menu Persistence (`timeout 0`)**: Setting/restoring `timeout 0` disables auto-boot timeouts, ensuring that the rEFInd graphical boot menu remains on screen indefinitely upon power-on or restart until an OS option is manually selected.
+* **Standard Restarts**: Performing a standard **Restart** (from either Windows or Linux/CachyOS) will bring up the **rEFInd boot menu** normally and pause until you choose an OS. The automated Windows shutdown sequence is only triggered when initiating a clean shutdown from Linux.
 
 ## Requirements
 
