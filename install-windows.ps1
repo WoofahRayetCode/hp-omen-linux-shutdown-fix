@@ -24,6 +24,8 @@ if ($Uninstall) {
     }
 
     Remove-Item -Force -ErrorAction SilentlyContinue $BatPath
+    $desktopPath = [System.Environment]::GetFolderPath('Desktop')
+    Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $desktopPath 'Reboot to rEFInd.lnk')
     Write-Info 'Removed.'
     exit 0
 }
@@ -127,9 +129,48 @@ $userDevicePath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Syst
 if (-not (Test-Path $userDevicePath)) { New-Item -Path $userDevicePath -Force | Out-Null }
 Set-ItemProperty -Path $userDevicePath -Name 'UserDeviceSignIn' -Value 0 -Type DWord -Force
 
+Write-Info 'Creating "Reboot to rEFInd" Desktop Shortcut...'
+$desktopPath = [System.Environment]::GetFolderPath('Desktop')
+$shortcutPath = Join-Path $desktopPath 'Reboot to rEFInd.lnk'
+
+# Dynamic search for rEFInd boot entry GUID
+$refindGuid = $null
+$bcdOutput = bcdedit /enum firmware 2>$null
+if ($bcdOutput) {
+    $currentGuid = $null
+    foreach ($line in $bcdOutput) {
+        if ($line -match 'identifier\s+\{([a-f0-9\-]+)\}') {
+            $currentGuid = $matches[1]
+        }
+        if ($currentGuid -and ($line -match 'rEFInd' -or $line -match '\\EFI\\refind\\refind_x64\.efi')) {
+            $refindGuid = "{$currentGuid}"
+            break
+        }
+    }
+}
+
+if (-not $refindGuid) {
+    # Fallback to bootmgr if specific entry not matched
+    $refindGuid = '{bootmgr}'
+}
+
+$wshShell = New-Object -ComObject WScript.Shell
+$shortcut = $wshShell.CreateShortcut($shortcutPath)
+$shortcut.TargetPath = 'powershell.exe'
+$shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -Command `"bcdedit /set {fwbootmgr} bootsequence $refindGuid; shutdown /r /t 0`""
+$shortcut.Description = 'Reboot immediately into the rEFInd Boot Manager'
+$shortcut.IconLocation = 'shell32.dll,238'
+$shortcut.Save()
+
+# Set shortcut to Run as Administrator (Byte offset 21 bit 5)
+$bytes = [System.IO.File]::ReadAllBytes($shortcutPath)
+$bytes[21] = $bytes[21] -bor 0x20
+[System.IO.File]::WriteAllBytes($shortcutPath, $bytes)
+
 Write-Info 'Installed.'
 Write-Host ''
 Write-Host 'Task name: OMEN Clean Shutdown'
 Write-Host 'Batch file: C:\omen-clean-shutdown.bat'
+Write-Host "Desktop shortcut created: $shortcutPath"
 Write-Host 'Configured for Windows on primary drive (Disk 0) and Linux on secondary drive (Disk 1).'
 Write-Host 'Use the task as part of the Linux shutdown flow described in the README.'
