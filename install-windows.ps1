@@ -33,43 +33,73 @@ if ($Uninstall) {
 Write-Info "Creating batch file..."
 $batch = @'
 @echo off
-set "EFI=B:"
+setlocal enabledelayedexpansion
 
-:: Try mounting EFI partition up to 5 times (waiting for storage service at early boot)
+:: 1. First check if S: or any already mounted drive contains S:\EFI\refind\refind.conf
+set "FOUND_EFI="
+if exist S:\EFI\refind\refind.conf (
+    set "FOUND_EFI=S:"
+    goto FOUND_DRIVE
+)
+
+:: 2. Search for any mounted letter containing EFI\refind\refind.conf
+for %%D in (D E F G H I J K L M N O P Q R T U V W X Y Z) do (
+    if exist %%D:\EFI\refind\refind.conf (
+        set "FOUND_EFI=%%D:"
+        goto FOUND_DRIVE
+    )
+)
+
+:: 3. If not mounted, try mounting system EFI to B:
+set "FOUND_EFI=B:"
 set /a count=0
 :MOUNT_LOOP
-mountvol %EFI% /S >nul 2>&1
-if exist %EFI%\EFI (
-    goto MOUNT_SUCCESS
+mountvol %FOUND_EFI% /S >nul 2>&1
+if exist %FOUND_EFI%\EFI (
+    goto FOUND_DRIVE
 )
 set /a count+=1
 if %count% lss 5 (
     timeout /t 2 /nobreak >nul
     goto MOUNT_LOOP
 )
-exit /b
+exit /b 1
 
-:MOUNT_SUCCESS
+:FOUND_DRIVE
 powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "& {
-    $refindSrc = 'B:\EFI\refind\refind_x64.efi'
-    $bootmgfw = 'B:\EFI\Microsoft\Boot\bootmgfw.efi'
+    $efiDrive = '%FOUND_EFI%'
 
-    # Sanity Check 1: Protect rEFInd bootloader binary if overwritten by Windows update
-    if ((Test-Path $refindSrc) -and (Test-Path $bootmgfw)) {
-        $size = (Get-Item $bootmgfw).Length
-        if ($size -gt 1048576) {
-            Copy-Item -Force $bootmgfw 'B:\EFI\Microsoft\Boot\bootmgfw.efi.bak'
-            Copy-Item -Force $refindSrc $bootmgfw
+    # Search for refind.conf across candidate paths
+    $confCandidates = @(
+        \"$efiDrive\EFI\refind\refind.conf\",
+        \"$efiDrive\EFI\Microsoft\Boot\refind.conf\",
+        \"S:\EFI\refind\refind.conf\"
+    )
+    $conf = $null
+    foreach ($cand in $confCandidates) {
+        if (Test-Path $cand) {
+            $conf = $cand
+            break
         }
     }
 
-    # Locate refind.conf
-    $conf = 'B:\EFI\Microsoft\Boot\refind.conf'
-    if (-not (Test-Path $conf)) { $conf = 'B:\EFI\refind\refind.conf' }
+    if (-not $conf) { exit }
+    $efiDir = Split-Path -Parent $conf
 
-    $flag = 'B:\EFI\refind\shutdown_flag'
-    $restore = 'B:\EFI\refind\default_selection_restore'
-    $restoreTimeout = 'B:\EFI\refind\default_selection_restore_timeout'
+    $flag = Join-Path $efiDir 'shutdown_flag'
+    $restore = Join-Path $efiDir 'default_selection_restore'
+    $restoreTimeout = Join-Path $efiDir 'default_selection_restore_timeout'
+
+    # Sanity Check 1: Protect rEFInd bootloader binary if overwritten by Windows update
+    $refindSrc = Join-Path $efiDir 'refind_x64.efi'
+    $bootmgfw = Join-Path (Split-Path -Parent $efiDir) 'Microsoft\Boot\bootmgfw.efi'
+    if ((Test-Path $refindSrc) -and (Test-Path $bootmgfw)) {
+        $size = (Get-Item $bootmgfw).Length
+        if ($size -gt 1048576) {
+            Copy-Item -Force $bootmgfw (Join-Path (Split-Path -Parent $efiDir) 'Microsoft\Boot\bootmgfw.efi.bak')
+            Copy-Item -Force $refindSrc $bootmgfw
+        }
+    }
 
     # Helper function to safely restore timeout and default_selection in refind.conf
     function Restore-RefindConf {
@@ -81,15 +111,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "& {
         if (Test-Path $restore) {
             $s = (Get-Content $restore -Raw).Trim()
             Remove-Item -Force $restore -ErrorAction SilentlyContinue
-            if ($s -notmatch '^default_selection') { $s = "default_selection $s" }
+            if ($s -notmatch '^default_selection') { $s = \"default_selection $s\" }
             $c = $c -replace '(?m)^[ \t]*default_selection[ \t]+.*$', $s
         } else {
-            # Default fallback selection
-            $c = $c -replace '(?m)^[ \t]*default_selection[ \t]+.*$', 'default_selection "Linux,vmlinuz"'
+            $c = $c -replace '(?m)^[ \t]*default_selection[ \t]+.*$', 'default_selection \"Linux,vmlinuz\"'
         }
 
-        # 2. Restore timeout (rEFInd config: 'timeout 0' or 'timeout 0' means wait indefinitely for user choice)
-        # Note: In rEFInd, 'timeout 0' disables auto-boot timeout and keeps menu up until user chooses an OS option.
+        # 2. Restore timeout
         $timeoutVal = 'timeout 0'
         if (Test-Path $restoreTimeout) {
             $t = (Get-Content $restoreTimeout -Raw).Trim()
@@ -97,10 +125,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "& {
             if ($t -match '^timeout[ \t]+') { 
                 $timeoutVal = $t 
             } else { 
-                $timeoutVal = "timeout $t" 
+                $timeoutVal = \"timeout $t\" 
             }
         }
-        # If timeout was -1 or invalid, force timeout 0 so menu never autoboots
         if ($timeoutVal -match '-1') {
             $timeoutVal = 'timeout 0'
         }
@@ -108,7 +135,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "& {
         if ($c -match '(?m)^[ \t]*timeout[ \t]+') {
             $c = $c -replace '(?m)^[ \t]*timeout[ \t]+.*$', $timeoutVal
         } else {
-            $c = $c + "`n$timeoutVal`n"
+            $c = $c + \"`n$timeoutVal`n\"
         }
         [System.IO.File]::WriteAllText($confPath, $c)
     }
@@ -117,31 +144,31 @@ powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "& {
         # Shutdown workflow triggered from Linux
         Remove-Item -Force $flag -ErrorAction SilentlyContinue
         Restore-RefindConf -confPath $conf
-        mountvol B: /D
-        shutdown /s /f /t 3
+        if ($efiDrive -eq 'B:') { mountvol B: /D }
+        shutdown /s /f /t 0
         exit
     } else {
-        # Normal Windows startup sanity check: Make sure refind.conf isn't left stuck with timeout -1
+        # Normal Windows startup sanity check
         if (Test-Path $conf) {
             $c = Get-Content $conf -Raw
             if ($c -match '(?m)^[ \t]*timeout[ \t]+-1') {
                 Restore-RefindConf -confPath $conf
             }
         }
+        if ($efiDrive -eq 'B:') { mountvol B: /D }
     }
 }"
-
-mountvol %EFI% /D
 '@
 
 
 Set-Content -Path $BatPath -Value $batch -Encoding ASCII
 
 Write-Info "Creating startup task..."
-$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\omen-clean-shutdown.bat"'
+$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\omen-clean-shutdown.ps1"'
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 
