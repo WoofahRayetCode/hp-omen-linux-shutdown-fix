@@ -34,10 +34,10 @@ $batch = @'
 set "EFI=B:"
 mountvol %EFI% /S
 if exist "%EFI%\EFI\refind\shutdown_flag" (
-    del "%EFI%\EFI\refind\shutdown_flag"
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "$p='B:\EFI\Microsoft\Boot\refind.conf'; if (-not (Test-Path $p)) { $p='B:\EFI\refind\refind.conf' }; $r='B:\EFI\refind\default_selection_restore'; $c=Get-Content $p -Raw; if (Test-Path $r) { $s=(Get-Content $r -Raw).Trim(); $c=$c -replace '^default_selection .+',$s; Remove-Item $r } else { $c=$c -replace '^default_selection .*','default_selection ""Linux,vmlinuz""' }; $c=$c -replace '^timeout .*','timeout 10'; Set-Content -Encoding ASCII -Path $p -Value $c"
+    del /f /q "%EFI%\EFI\refind\shutdown_flag"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$p='B:\EFI\Microsoft\Boot\refind.conf'; if (-not (Test-Path $p)) { $p='B:\EFI\refind\refind.conf' }; $r='B:\EFI\refind\default_selection_restore'; if (Test-Path $p) { $c = Get-Content $p -Raw; if (Test-Path $r) { $s = (Get-Content $r -Raw).Trim(); Remove-Item -Force $r; if ($s -notmatch '^default_selection') { $s = \"default_selection `$s\" }; $c = $c -replace '(?m)^[ \t]*default_selection[ \t]+.*$', `$s } else { $c = $c -replace '(?m)^[ \t]*default_selection[ \t]+.*$', 'default_selection \"Linux,vmlinuz\"' }; $c = $c -replace '(?m)^[ \t]*timeout[ \t]+.*$', 'timeout 10'; [System.IO.File]::WriteAllText($p, $c) }"
     mountvol %EFI% /D
-    shutdown /s /t 5
+    shutdown /s /f /t 5
 ) else (
     mountvol %EFI% /D
 )
