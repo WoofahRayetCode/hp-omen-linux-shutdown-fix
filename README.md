@@ -166,6 +166,39 @@ You can override paths before running `install-linux.sh`:
 | `FLAG_FILE` | `$EFI_MOUNT/EFI/refind/shutdown_flag` | Flag file that tells Windows to finish shutdown |
 | `RESTORE_FILE` | `$EFI_MOUNT/EFI/refind/default_selection_restore` | Saved rEFInd default selection |
 
+## Self-Healing Bootloader Architecture
+
+Both OS installers set up automated self-healing mechanisms to protect rEFInd:
+
+- **Windows Self-Healing (`C:\omen-clean-shutdown.bat`)**: Runs as a `SYSTEM` startup task on every Windows boot.
+  - Checks if a Windows Update overwrote `bootmgfw.efi` (file size > 1MB) and restores `refind_x64.efi`.
+  - Checks if `refind.conf` has `timeout -1` left over from an interrupted shutdown and restores it to `timeout 10`.
+- **Linux Self-Healing (`refind-protect.service`)**: Runs at boot via systemd to detect if Windows replaced `bootmgfw.efi` and restores `refind_x64.efi`.
+
+## Troubleshooting
+
+### Windows Boots Directly into Windows (rEFInd Menu Skipped)
+
+If restarting or powering on boots straight into Windows without showing the rEFInd menu:
+
+1. **Disable Fast Startup**:
+   - Open **Control Panel** $\rightarrow$ **Power Options** $\rightarrow$ **Choose what the power buttons do**.
+   - Click **Change settings that are currently unavailable**.
+   - Uncheck **Turn on fast startup**.
+2. **Re-run the Windows script**:
+   - Open PowerShell as Administrator and run `.\install-windows.ps1` to re-trigger the self-healing fix.
+3. **Verify BIOS / NVRAM Boot Order**:
+   - In PowerShell (Admin), check your boot menu entries:
+     ```powershell
+     bcdedit /enum firmware
+     ```
+   - If needed, restore rEFInd as the primary boot manager manually:
+     ```powershell
+     bcdedit /set {fwbootmgr} displayorder {bootmgr} /addfirst
+     ```
+
+---
+
 ## Notes
 
 - This is a workaround, not a firmware fix.
