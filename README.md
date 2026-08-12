@@ -170,9 +170,9 @@ You can override paths before running `install-linux.sh`:
 
 Both OS installers set up automated self-healing mechanisms to protect rEFInd:
 
-- **Windows Self-Healing (`C:\omen-clean-shutdown.bat`)**: Runs as a `SYSTEM` startup task on every Windows boot.
+- **Windows Self-Healing (`C:\omen-clean-shutdown.bat`)**: Runs as a `SYSTEM` startup task on every Windows boot (configured to run on both AC and Battery power).
   - Checks if a Windows Update overwrote `bootmgfw.efi` (file size > 1MB) and restores `refind_x64.efi`.
-  - Checks if `refind.conf` has `timeout -1` left over from an interrupted shutdown and restores it to `timeout 10`.
+  - Checks if `refind.conf` has `timeout -1` left over from an interrupted shutdown and restores your configured timeout (or defaults to `timeout 10`).
 - **Linux Self-Healing (`refind-protect.service`)**: Runs at boot via systemd to detect if Windows replaced `bootmgfw.efi` and restores `refind_x64.efi`.
 
 ## Troubleshooting
@@ -202,6 +202,8 @@ If restarting or powering on boots straight into Windows without showing the rEF
 ## Notes
 
 - This is a workaround, not a firmware fix.
+- **Battery Care / 80% Charge Limit:** HP's 80% battery limit / battery care mode in BIOS/OMEN Gaming Hub works cleanly alongside this workaround. The scheduled task is configured to run on both battery and AC power (`AllowStartIfOnBatteries`).
+- **Timeout & Selection Preservation:** The shutdown script saves your current rEFInd menu timeout and default OS selection before temporarily forcing `timeout -1` and `default_selection "Windows"` for the reboot, and restores both exact settings on the Windows side.
 - **Windows Fast Startup**: Fast Startup must be disabled in Windows (`Control Panel` -> `Power Options` -> `Choose what the power buttons do` -> uncheck `Turn on fast startup`) so that startup tasks run properly on boot.
 - The OMEN AI/Copilot key usually appears as `XF86Launch2` on Linux, but the installer will try to detect `KEY_PROG1` through `KEY_PROG4` first.
 - The EFI paths used here match the OMEN layout from the original guide; if your machine uses different paths, adjust the scripts or set the environment variables above.
