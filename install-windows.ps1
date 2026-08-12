@@ -34,10 +34,76 @@ $batch = @'
 set "EFI=B:"
 mountvol %EFI% /S
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$refindSrc = 'B:\EFI\refind\refind_x64.efi'; $bootmgfw = 'B:\EFI\Microsoft\Boot\bootmgfw.efi'; if ((Test-Path $refindSrc) -and (Test-Path $bootmgfw)) { $size = (Get-Item $bootmgfw).Length; if ($size -gt 1048576) { Copy-Item -Force $bootmgfw 'B:\EFI\Microsoft\Boot\bootmgfw.efi.bak'; Copy-Item -Force $refindSrc $bootmgfw; } }; $flag = 'B:\EFI\refind\shutdown_flag'; $conf = 'B:\EFI\Microsoft\Boot\refind.conf'; if (-not (Test-Path $conf)) { $conf = 'B:\EFI\refind\refind.conf' }; $restore = 'B:\EFI\refind\default_selection_restore'; $restoreTimeout = 'B:\EFI\refind\default_selection_restore_timeout'; if (Test-Path $flag) { Remove-Item -Force $flag; if (Test-Path $conf) { $c = Get-Content $conf -Raw; if (Test-Path $restore) { $s = (Get-Content $restore -Raw).Trim(); Remove-Item -Force $restore; if ($s -notmatch '^default_selection') { $s = \"default_selection $s\" }; $c = $c -replace '(?m)^[ \t]*default_selection[ \t]+.*$', $s } else { $c = $c -replace '(?m)^[ \t]*default_selection[ \t]+.*$', 'default_selection \"Linux,vmlinuz\"' }; $timeoutVal = 'timeout 10'; if (Test-Path $restoreTimeout) { $t = (Get-Content $restoreTimeout -Raw).Trim(); Remove-Item -Force $restoreTimeout; if ($t -match '^timeout[ \t]+') { $timeoutVal = $t } else { $timeoutVal = \"timeout $t\" }; $c = $c -replace '(?m)^[ \t]*timeout[ \t]+.*$', $timeoutVal; [System.IO.File]::WriteAllText($conf, $c) } }; mountvol B: /D; shutdown /s /f /t 5; exit } elseif (Test-Path $conf) { $c = Get-Content $conf -Raw; if ($c -match '(?m)^[ \t]*timeout[ \t]+-1') { $c = $c -replace '(?m)^[ \t]*timeout[ \t]+.*$', 'timeout 10'; [System.IO.File]::WriteAllText($conf, $c) } }"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& {
+    $refindSrc = 'B:\EFI\refind\refind_x64.efi'
+    $bootmgfw = 'B:\EFI\Microsoft\Boot\bootmgfw.efi'
+
+    # Sanity Check 1: Protect rEFInd bootloader binary if overwritten by Windows update
+    if ((Test-Path $refindSrc) -and (Test-Path $bootmgfw)) {
+        $size = (Get-Item $bootmgfw).Length
+        if ($size -gt 1048576) {
+            Copy-Item -Force $bootmgfw 'B:\EFI\Microsoft\Boot\bootmgfw.efi.bak'
+            Copy-Item -Force $refindSrc $bootmgfw
+        }
+    }
+
+    # Locate refind.conf
+    $conf = 'B:\EFI\Microsoft\Boot\refind.conf'
+    if (-not (Test-Path $conf)) { $conf = 'B:\EFI\refind\refind.conf' }
+
+    $flag = 'B:\EFI\refind\shutdown_flag'
+    $restore = 'B:\EFI\refind\default_selection_restore'
+    $restoreTimeout = 'B:\EFI\refind\default_selection_restore_timeout'
+
+    # Helper function to safely restore timeout and default_selection in refind.conf
+    function Restore-RefindConf {
+        param([string]$confPath)
+        if (-not (Test-Path $confPath)) { return }
+        $c = Get-Content $confPath -Raw
+
+        # 1. Restore default_selection
+        if (Test-Path $restore) {
+            $s = (Get-Content $restore -Raw).Trim()
+            Remove-Item -Force $restore -ErrorAction SilentlyContinue
+            if ($s -notmatch '^default_selection') { $s = "default_selection $s" }
+            $c = $c -replace '(?m)^[ \t]*default_selection[ \t]+.*$', $s
+        } else {
+            # Default fallback selection
+            $c = $c -replace '(?m)^[ \t]*default_selection[ \t]+.*$', 'default_selection "Linux,vmlinuz"'
+        }
+
+        # 2. Restore timeout (ensure it is NEVER stuck at -1)
+        $timeoutVal = 'timeout 10'
+        if (Test-Path $restoreTimeout) {
+            $t = (Get-Content $restoreTimeout -Raw).Trim()
+            Remove-Item -Force $restoreTimeout -ErrorAction SilentlyContinue
+            if ($t -match '^timeout[ \t]+') { $timeoutVal = $t } else { $timeoutVal = "timeout $t" }
+        }
+        $c = $c -replace '(?m)^[ \t]*timeout[ \t]+.*$', $timeoutVal
+        [System.IO.File]::WriteAllText($confPath, $c)
+    }
+
+    if (Test-Path $flag) {
+        # Shutdown workflow triggered from Linux
+        Remove-Item -Force $flag -ErrorAction SilentlyContinue
+        Restore-RefindConf -confPath $conf
+        mountvol B: /D
+        shutdown /s /f /t 7
+        exit
+    } else {
+        # Normal Windows startup sanity check: Make sure refind.conf isn't left stuck with timeout -1
+        if (Test-Path $conf) {
+            $c = Get-Content $conf -Raw
+            if ($c -match '(?m)^[ \t]*timeout[ \t]+-1') {
+                Restore-RefindConf -confPath $conf
+            }
+        }
+    }
+}"
 
 mountvol %EFI% /D
 '@
+
 
 Set-Content -Path $BatPath -Value $batch -Encoding ASCII
 
