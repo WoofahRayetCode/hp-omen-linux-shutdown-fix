@@ -34,8 +34,22 @@ Write-Info "Creating batch file..."
 $batch = @'
 @echo off
 set "EFI=B:"
-mountvol %EFI% /S
 
+:: Try mounting EFI partition up to 5 times (waiting for storage service at early boot)
+set /a count=0
+:MOUNT_LOOP
+mountvol %EFI% /S >nul 2>&1
+if exist %EFI%\EFI (
+    goto MOUNT_SUCCESS
+)
+set /a count+=1
+if %count% lss 5 (
+    timeout /t 2 /nobreak >nul
+    goto MOUNT_LOOP
+)
+exit /b
+
+:MOUNT_SUCCESS
 powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "& {
     $refindSrc = 'B:\EFI\refind\refind_x64.efi'
     $bootmgfw = 'B:\EFI\Microsoft\Boot\bootmgfw.efi'
@@ -90,7 +104,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "& {
         Remove-Item -Force $flag -ErrorAction SilentlyContinue
         Restore-RefindConf -confPath $conf
         mountvol B: /D
-        shutdown /s /f /t 7
+        shutdown /s /f /t 3
         exit
     } else {
         # Normal Windows startup sanity check: Make sure refind.conf isn't left stuck with timeout -1
