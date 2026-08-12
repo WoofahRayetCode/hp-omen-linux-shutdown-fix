@@ -71,7 +71,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\install-windows.ps1
 ```
 
-This sets up the `OMEN Clean Shutdown` startup task and configures the `RealTimeIsUniversal` registry key so Windows treats the hardware clock as UTC, preventing time drift when dual-booting between Windows and Linux.
+This sets up the `OMEN Clean Shutdown` startup task (with forced process termination `/f`), disables Windows Fast Startup/Hibernation (`powercfg /h off`), prevents pre-login application launching, and configures the `RealTimeIsUniversal` registry key so Windows treats the hardware clock as UTC, preventing time drift when dual-booting between Windows and Linux.
 
 ### 2. On Linux (Secondary Drive - Disk 1)
 
@@ -212,7 +212,8 @@ If restarting or powering on boots straight into Windows without showing the rEF
 - This is a workaround, not a firmware fix.
 - **Battery Care / 80% Charge Limit:** HP's 80% battery limit / battery care mode in BIOS/OMEN Gaming Hub works cleanly alongside this workaround. The scheduled task is configured to run on both battery and AC power (`AllowStartIfOnBatteries`).
 - **Timeout & Selection Preservation:** The shutdown script saves your current rEFInd menu timeout and default OS selection before temporarily forcing `timeout -1` and `default_selection "Windows"` for the reboot, and restores both exact settings on the Windows side.
-- **Windows Fast Startup**: Fast Startup must be disabled in Windows (`Control Panel` -> `Power Options` -> `Choose what the power buttons do` -> uncheck `Turn on fast startup`) so that startup tasks run properly on boot.
+- **Windows Fast Startup & Hibernation Auto-Disabling**: Fast Startup and Hibernation are automatically disabled by `install-windows.ps1` (`powercfg /h off` and `HiberbootEnabled = 0`) to prevent Windows from saving kernel/app session states to disk, which often causes hangs during pre-boot initialization.
+- **Pre-login App Launch Prevention**: The installer configures `UserDeviceSignIn = 0` to block Windows 10/11 from pre-loading user startup programs in the background before user logon. This ensures background services don't stall the automated 5-second shutdown window.
 - The OMEN AI/Copilot key usually appears as `XF86Launch2` on Linux, but the installer will try to detect `KEY_PROG1` through `KEY_PROG4` first.
 - The EFI paths used here match the OMEN layout from the original guide; if your machine uses different paths, adjust the scripts or set the environment variables above.
 - This workaround relies on rEFInd. It will not work with Limine, GRUB, or systemd-boot without significant changes.
