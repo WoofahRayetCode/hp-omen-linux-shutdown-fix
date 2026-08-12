@@ -15,56 +15,87 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 ACTION="${1:-install}"
-SYSTEMCTL_PATH="$(command -v systemctl)"
+SYSTEMCTL_PATH="$(command -v systemctl || die "systemctl command not found")"
 GSETTINGS_PATH="$(command -v gsettings || true)"
+
 CURRENT_USER="${SUDO_USER:-}"
+if [ -z "$CURRENT_USER" ] || [ "$CURRENT_USER" = "root" ]; then
+  CURRENT_USER="${LOGNAME:-}"
+  if [ "$CURRENT_USER" = "root" ] || [ -z "$CURRENT_USER" ]; then
+    CURRENT_USER="$(logname 2>/dev/null || true)"
+  fi
+fi
+
 CURRENT_HOME=""
+if [ -n "$CURRENT_USER" ] && [ "$CURRENT_USER" != "root" ]; then
+  CURRENT_HOME="$(getent passwd "$CURRENT_USER" | cut -d: -f6 || true)"
+fi
+
 KEYBINDING_PATH="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/"
 KEYBINDING_NAME="OMEN Clean Shutdown"
 KEYBINDING_COMMAND="/usr/local/bin/omen-clean-shutdown-launcher"
 KEYBINDING_KEY="XF86Launch2"
 
-if [ -n "$CURRENT_USER" ]; then
-  CURRENT_HOME="$(getent passwd "$CURRENT_USER" | cut -d: -f6 || true)"
-fi
-
 source /etc/os-release 2>/dev/null || true
-if [ "${ID:-}" != "fedora" ] && [[ "${ID_LIKE:-}" != *fedora* ]] && [ "${ID:-}" != "cachyos" ] && [[ "${ID_LIKE:-}" != *arch* ]]; then
+if [ "${ID:-}" != "fedora" ] && [[ "${ID_LIKE:-}" != *fedora* ]] && \
+   [ "${ID:-}" != "cachyos" ] && [ "${ID:-}" != "arch" ] && [[ "${ID_LIKE:-}" != *arch* ]]; then
   info "This installer is written for Fedora/Nobara and Arch/CachyOS, but will keep going."
 fi
 
-# Dual Drive Setup: Windows on Primary Drive (Disk 0), Linux on Secondary Drive (Disk 1)
-EFI_MOUNT="${EFI_MOUNT:-/boot/efi}"
-REFIND_CONF="${REFIND_CONF:-}"
-FLAG_FILE="${FLAG_FILE:-$EFI_MOUNT/EFI/refind/shutdown_flag}"
-RESTORE_FILE="${RESTORE_FILE:-$EFI_MOUNT/EFI/refind/default_selection_restore}"
-
-if [ -z "${REFIND_SOURCE:-}" ]; then
-  if [ -f "/usr/share/refind/refind_x64.efi" ]; then
-    REFIND_SOURCE="/usr/share/refind/refind_x64.efi"
-  else
-    REFIND_SOURCE="/usr/share/rEFInd/refind/refind_x64.efi"
-  fi
-fi
-REFIND_TARGET="${REFIND_TARGET:-$EFI_MOUNT/EFI/Microsoft/Boot/bootmgfw.efi}"
-
+EFI_MOUNT_EXPLICIT="${EFI_MOUNT:-}"
+EFI_MOUNT="${EFI_MOUNT:-}"
 EFI_MOUNTED_BY_SCRIPT=0
 
+detect_efi_mount() {
+  if [ -n "$EFI_MOUNT_EXPLICIT" ]; then
+    EFI_MOUNT="$EFI_MOUNT_EXPLICIT"
+    return 0
+  fi
+
+  local candidate
+  for candidate in /boot/efi /efi /boot; do
+    if findmnt -n -o TARGET "$candidate" >/dev/null 2>&1 || mountpoint -q "$candidate" 2>/dev/null; then
+      if [ -d "$candidate/EFI" ] || [ -f "$candidate/refind.conf" ]; then
+        EFI_MOUNT="$candidate"
+        return 0
+      fi
+    fi
+  done
+
+  for candidate in /boot/efi /efi /boot; do
+    if [ -d "$candidate/EFI" ]; then
+      EFI_MOUNT="$candidate"
+      return 0
+    fi
+  done
+
+  EFI_MOUNT="/boot/efi"
+}
+
 ensure_efi_mounted() {
+  detect_efi_mount
+
   if findmnt -n -o TARGET "$EFI_MOUNT" >/dev/null 2>&1 || mountpoint -q "$EFI_MOUNT" 2>/dev/null; then
     info "EFI partition already mounted at $EFI_MOUNT"
     return 0
   fi
 
-  info "EFI partition not mounted; searching for it..."
+  info "Searching for EFI System Partition..."
   local efi_part=""
-
   # GPT GUID for EFI System Partition
   efi_part="$(lsblk -o NAME,PARTTYPE -p -n 2>/dev/null | awk '$2 == "c12a7328-f81f-11d2-ba4b-00a0c93ec93b" {print $1; exit}')"
-
-  # MBR/GPT fallback type IDs
   if [ -z "$efi_part" ]; then
     efi_part="$(lsblk -o NAME,PARTTYPE -p -n 2>/dev/null | awk '$2 == "ef00" || $2 == "ef" || $2 == "0xef" {print $1; exit}')"
+  fi
+
+  if [ -n "$efi_part" ]; then
+    local existing_target
+    existing_target="$(findmnt -n -o TARGET "$efi_part" 2>/dev/null | head -n1 || true)"
+    if [ -n "$existing_target" ]; then
+      EFI_MOUNT="$existing_target"
+      info "EFI partition $efi_part is already mounted at $EFI_MOUNT"
+      return 0
+    fi
   fi
 
   if [ -z "$efi_part" ]; then
@@ -84,9 +115,16 @@ find_refind_conf() {
   local candidate
 
   for candidate in \
-    "$REFIND_CONF" \
+    "${REFIND_CONF:-}" \
+    "$EFI_MOUNT/EFI/refind/refind.conf" \
     "$EFI_MOUNT/EFI/Microsoft/Boot/refind.conf" \
-    "$EFI_MOUNT/EFI/refind/refind.conf"
+    "$EFI_MOUNT/refind.conf" \
+    "/boot/efi/EFI/refind/refind.conf" \
+    "/boot/efi/EFI/Microsoft/Boot/refind.conf" \
+    "/efi/EFI/refind/refind.conf" \
+    "/efi/EFI/Microsoft/Boot/refind.conf" \
+    "/boot/EFI/refind/refind.conf" \
+    "/boot/EFI/Microsoft/Boot/refind.conf"
   do
     if [ -n "${candidate:-}" ] && [ -f "$candidate" ]; then
       printf '%s\n' "$candidate"
@@ -95,13 +133,38 @@ find_refind_conf() {
   done
 
   if [ -d "$EFI_MOUNT" ]; then
-    find "$EFI_MOUNT" -path '*/refind.conf' -print -quit 2>/dev/null || true
+    find "$EFI_MOUNT" -maxdepth 4 -name 'refind.conf' -print -quit 2>/dev/null || true
   fi
 }
 
+find_refind_source() {
+  local candidate
+
+  for candidate in \
+    "${REFIND_SOURCE:-}" \
+    "/usr/share/refind/refind_x64.efi" \
+    "/usr/share/rEFInd/refind/refind_x64.efi" \
+    "$EFI_MOUNT/EFI/refind/refind_x64.efi"
+  do
+    if [ -n "${candidate:-}" ] && [ -f "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+}
+
 ensure_efi_mounted
+
+FLAG_FILE="${FLAG_FILE:-$EFI_MOUNT/EFI/refind/shutdown_flag}"
+RESTORE_FILE="${RESTORE_FILE:-$EFI_MOUNT/EFI/refind/default_selection_restore}"
+
 REFIND_CONF_PATH="$(find_refind_conf)"
 [ -n "$REFIND_CONF_PATH" ] || die "Could not find refind.conf. Mount your EFI partition at $EFI_MOUNT or set REFIND_CONF."
+
+REFIND_SOURCE="$(find_refind_source)"
+[ -n "$REFIND_SOURCE" ] || die "Could not find refind_x64.efi. Please install rEFInd (e.g. 'sudo pacman -S refind' on CachyOS/Arch or 'sudo dnf install refind' on Fedora)."
+
+REFIND_TARGET="${REFIND_TARGET:-$EFI_MOUNT/EFI/Microsoft/Boot/bootmgfw.efi}"
 
 detect_keybinding() {
   local key_line=""
@@ -117,9 +180,9 @@ detect_keybinding() {
       KEY_PROG4) KEYBINDING_KEY="XF86Launch4" ;;
       *) KEYBINDING_KEY="XF86Launch2" ;;
     esac
-    info "Detected $key_line; using GNOME binding $KEYBINDING_KEY."
+    info "Detected $key_line; using binding key $KEYBINDING_KEY."
   else
-    info "Using default GNOME binding $KEYBINDING_KEY."
+    info "Using default binding key $KEYBINDING_KEY."
   fi
 }
 
@@ -130,8 +193,14 @@ install_files() {
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [ "\$(id -u)" -ne 0 ]; then
+  echo "error: Run this script with sudo or use /usr/local/bin/omen-clean-shutdown-launcher" >&2
+  exit 1
+fi
+
 REFIND_CONF="$REFIND_CONF_PATH"
 FLAG_FILE="$FLAG_FILE"
+RESTORE_FILE="$RESTORE_FILE"
 
 [ -f "\$REFIND_CONF" ] || { echo "Missing refind.conf: \$REFIND_CONF" >&2; exit 1; }
 mkdir -p "\$(dirname "\$FLAG_FILE")"
@@ -140,15 +209,25 @@ if [ ! -f "\${REFIND_CONF}.bak" ]; then
   cp -f "\$REFIND_CONF" "\${REFIND_CONF}.bak"
 fi
 
-current_selection="\$(grep '^default_selection ' "\$REFIND_CONF" || true)"
+current_selection="\$(grep '^[[:space:]]*default_selection[[:space:]]' "\$REFIND_CONF" || true)"
 if [ -n "\$current_selection" ]; then
-  printf '%s\n' "\$current_selection" > "$RESTORE_FILE"
+  printf '%s\n' "\$current_selection" > "\$RESTORE_FILE"
 else
-  printf '# default_selection not set\n' > "$RESTORE_FILE"
+  printf '# default_selection not set\n' > "\$RESTORE_FILE"
 fi
 
-sed -i 's/^timeout .*/timeout -1/' "\$REFIND_CONF"
-sed -i 's/^default_selection .*/default_selection "Windows"/' "\$REFIND_CONF"
+if grep -q '^[[:space:]]*timeout[[:space:]]' "\$REFIND_CONF"; then
+  sed -i 's/^[[:space:]]*timeout[[:space:]].*/timeout -1/' "\$REFIND_CONF"
+else
+  printf '\ntimeout -1\n' >> "\$REFIND_CONF"
+fi
+
+if grep -q '^[[:space:]]*default_selection[[:space:]]' "\$REFIND_CONF"; then
+  sed -i 's/^[[:space:]]*default_selection[[:space:]].*/default_selection "Windows"/' "\$REFIND_CONF"
+else
+  printf '\ndefault_selection "Windows"\n' >> "\$REFIND_CONF"
+fi
+
 touch "\$FLAG_FILE"
 sync
 systemctl reboot
@@ -165,8 +244,11 @@ confirm_shutdown() {
   elif command -v zenity >/dev/null 2>&1; then
     zenity --question --title="Confirm Shutdown" --text="Shut down the laptop using the Windows workaround?"
     return \$?
+  elif command -v yad >/dev/null 2>&1; then
+    yad --image=dialog-question --title="Confirm Shutdown" --text="Shut down the laptop using the Windows workaround?" --button=Yes:0 --button=No:1
+    return \$?
   fi
-  echo "No dialog tool found (kdialog or zenity); proceeding without confirmation." >&2
+  echo "No dialog tool found (kdialog, zenity, or yad); proceeding without confirmation." >&2
   return 0
 }
 
@@ -184,10 +266,17 @@ set -euo pipefail
 REFIND_SOURCE="$REFIND_SOURCE"
 REFIND_TARGET="$REFIND_TARGET"
 
-[ -f "\$REFIND_SOURCE" ] || { echo "Missing rEFInd source: \$REFIND_SOURCE" >&2; exit 1; }
-[ -f "\$REFIND_TARGET" ] || { echo "Missing Windows boot file: \$REFIND_TARGET" >&2; exit 1; }
+if [ ! -f "\$REFIND_SOURCE" ]; then
+  echo "Missing rEFInd source: \$REFIND_SOURCE" >&2
+  exit 1
+fi
 
-FILESIZE=\$(stat -c%s "\$REFIND_TARGET")
+if [ ! -f "\$REFIND_TARGET" ]; then
+  echo "Target \$REFIND_TARGET does not exist, skipping rEFInd protection." >&2
+  exit 0
+fi
+
+FILESIZE=\$(stat -c%s "\$REFIND_TARGET" 2>/dev/null || stat -f%z "\$REFIND_TARGET" 2>/dev/null || echo 0)
 if [ "\$FILESIZE" -gt 1048576 ]; then
   cp -f "\$REFIND_SOURCE" "\$REFIND_TARGET"
 fi
@@ -196,6 +285,19 @@ EOF
   chmod 0755 /usr/local/bin/omen-clean-shutdown.sh
   chmod 0755 /usr/local/bin/omen-clean-shutdown-launcher
   chmod 0755 /usr/local/bin/refind-protect.sh
+
+  cat >/usr/share/applications/omen-clean-shutdown.desktop <<EOF
+[Desktop Entry]
+Type=Application
+Name=OMEN Clean Shutdown
+Comment=Shut down HP OMEN laptop cleanly via Windows workaround
+Exec=/usr/local/bin/omen-clean-shutdown-launcher
+Icon=system-shutdown
+Categories=System;Utility;
+Terminal=false
+X-KDE-Shortcuts=$KEYBINDING_KEY
+EOF
+  chmod 0644 /usr/share/applications/omen-clean-shutdown.desktop
 
   cat >/etc/systemd/system/omen-clean-shutdown.service <<'EOF'
 [Unit]
@@ -238,7 +340,7 @@ EOF
   detect_keybinding
 
   if [ -n "$GSETTINGS_PATH" ] && [ -n "$CURRENT_USER" ] && [ "$CURRENT_USER" != "root" ]; then
-    info "Trying to bind the OMEN key in GNOME..."
+    info "Trying to bind key in GNOME..."
     if sudo -u "$CURRENT_USER" dbus-run-session -- sh -c "
       gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings \"['$KEYBINDING_PATH']\" &&
       gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$KEYBINDING_PATH name '$KEYBINDING_NAME' &&
@@ -246,18 +348,26 @@ EOF
       gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$KEYBINDING_PATH binding '$KEYBINDING_KEY'
     " >/dev/null 2>&1; then
       info "GNOME keybinding created for $KEYBINDING_KEY."
-    else
-      info "GNOME keybinding was not created automatically."
-      info "Bind $KEYBINDING_KEY to $KEYBINDING_COMMAND manually if needed."
     fi
   fi
 
-  info "Installed."
+  if [ -n "$CURRENT_USER" ] && [ "$CURRENT_USER" != "root" ] && [ -n "$CURRENT_HOME" ]; then
+    if command -v kwriteconfig6 >/dev/null 2>&1; then
+      info "Configuring KDE Plasma 6 shortcut for $CURRENT_USER..."
+      sudo -u "$CURRENT_USER" kwriteconfig6 --file "$CURRENT_HOME/.config/kglobalshortcutsrc" --group "services" --key "omen-clean-shutdown.desktop" "_launch=$KEYBINDING_KEY,none,OMEN Clean Shutdown" || true
+    elif command -v kwriteconfig5 >/dev/null 2>&1; then
+      info "Configuring KDE Plasma 5 shortcut for $CURRENT_USER..."
+      sudo -u "$CURRENT_USER" kwriteconfig5 --file "$CURRENT_HOME/.config/kglobalshortcutsrc" --group "services" --key "omen-clean-shutdown.desktop" "_launch=$KEYBINDING_KEY,none,OMEN Clean Shutdown" || true
+    fi
+  fi
+
+  info "Installed successfully."
   echo
-  echo "Use this command from a shortcut or terminal:"
-  echo "  /usr/local/bin/omen-clean-shutdown-launcher"
+  echo "You can launch OMEN Clean Shutdown using:"
+  echo "  1. App launcher menu: search for 'OMEN Clean Shutdown'"
+  echo "  2. Launcher command: omen-clean-shutdown-launcher"
+  echo "  3. Keybinding ($KEYBINDING_KEY)"
   echo
-  echo "The OMEN AI/Copilot key usually shows up on Linux as XF86Launch2."
 }
 
 remove_files() {
@@ -268,16 +378,17 @@ remove_files() {
   rm -f /usr/local/bin/omen-clean-shutdown.sh
   rm -f /usr/local/bin/omen-clean-shutdown-launcher
   rm -f /usr/local/bin/refind-protect.sh
+  rm -f /usr/share/applications/omen-clean-shutdown.desktop
   rm -f /etc/systemd/system/omen-clean-shutdown.service
   rm -f /etc/systemd/system/refind-protect.service
   rm -f /etc/sudoers.d/omen-clean-shutdown
-  if [ -f "${REFIND_CONF_PATH}.bak" ]; then
+  if [ -n "${REFIND_CONF_PATH:-}" ] && [ -f "${REFIND_CONF_PATH}.bak" ]; then
     cp -f "${REFIND_CONF_PATH}.bak" "$REFIND_CONF_PATH"
   fi
   rm -f "$FLAG_FILE"
   rm -f "$RESTORE_FILE"
   systemctl daemon-reload
-  info "Removed."
+  info "Removed successfully."
 }
 
 case "$ACTION" in
