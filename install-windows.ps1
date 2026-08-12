@@ -33,14 +33,49 @@ $batch = @'
 @echo off
 set "EFI=B:"
 mountvol %EFI% /S
-if exist "%EFI%\EFI\refind\shutdown_flag" (
-    del /f /q "%EFI%\EFI\refind\shutdown_flag"
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "$p='B:\EFI\Microsoft\Boot\refind.conf'; if (-not (Test-Path $p)) { $p='B:\EFI\refind\refind.conf' }; $r='B:\EFI\refind\default_selection_restore'; if (Test-Path $p) { $c = Get-Content $p -Raw; if (Test-Path $r) { $s = (Get-Content $r -Raw).Trim(); Remove-Item -Force $r; if ($s -notmatch '^default_selection') { $s = \"default_selection `$s\" }; $c = $c -replace '(?m)^[ \t]*default_selection[ \t]+.*$', `$s } else { $c = $c -replace '(?m)^[ \t]*default_selection[ \t]+.*$', 'default_selection \"Linux,vmlinuz\"' }; $c = $c -replace '(?m)^[ \t]*timeout[ \t]+.*$', 'timeout 10'; [System.IO.File]::WriteAllText($p, $c) }"
-    mountvol %EFI% /D
-    shutdown /s /f /t 5
-) else (
-    mountvol %EFI% /D
-)
+
+:: Self-Healing Logic: Check and restore rEFInd bootloader if Windows overwritten it or if timeout/default was stuck
+powershell -NoProfile -ExecutionPolicy Bypass -Command "^
+    $refindSrc = 'B:\EFI\refind\refind_x64.efi'; ^
+    $bootmgfw = 'B:\EFI\Microsoft\Boot\bootmgfw.efi'; ^
+    if ((Test-Path $refindSrc) -and (Test-Path $bootmgfw)) { ^
+        $size = (Get-Item $bootmgfw).Length; ^
+        if ($size -gt 1048576) { ^
+            Copy-Item -Force $bootmgfw 'B:\EFI\Microsoft\Boot\bootmgfw.efi.bak'; ^
+            Copy-Item -Force $refindSrc $bootmgfw; ^
+        } ^
+    }; ^
+    $flag = 'B:\EFI\refind\shutdown_flag'; ^
+    $conf = 'B:\EFI\Microsoft\Boot\refind.conf'; ^
+    if (-not (Test-Path $conf)) { $conf = 'B:\EFI\refind\refind.conf' }; ^
+    $restore = 'B:\EFI\refind\default_selection_restore'; ^
+    if (Test-Path $flag) { ^
+        Remove-Item -Force $flag; ^
+        if (Test-Path $conf) { ^
+            $c = Get-Content $conf -Raw; ^
+            if (Test-Path $restore) { ^
+                $s = (Get-Content $restore -Raw).Trim(); ^
+                Remove-Item -Force $restore; ^
+                if ($s -notmatch '^default_selection') { $s = \"default_selection `$s\" }; ^
+                $c = $c -replace '(?m)^[ \t]*default_selection[ \t]+.*$', `$s ^
+            } else { ^
+                $c = $c -replace '(?m)^[ \t]*default_selection[ \t]+.*$', 'default_selection \"Linux,vmlinuz\"' ^
+            }; ^
+            $c = $c -replace '(?m)^[ \t]*timeout[ \t]+.*$', 'timeout 10'; ^
+            [System.IO.File]::WriteAllText($conf, $c) ^
+        }; ^
+        mountvol %EFI% /D; ^
+        shutdown /s /f /t 5; ^
+        exit ^
+    } else if (Test-Path $conf) { ^
+        $c = Get-Content $conf -Raw; ^
+        if ($c -match '(?m)^[ \t]*timeout[ \t]+-1') { ^
+            $c = $c -replace '(?m)^[ \t]*timeout[ \t]+.*$', 'timeout 10'; ^
+            [System.IO.File]::WriteAllText($conf, $c) ^
+        } ^
+    }"
+
+mountvol %EFI% /D
 '@
 
 Set-Content -Path $BatPath -Value $batch -Encoding ASCII
