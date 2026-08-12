@@ -208,12 +208,20 @@ mkdir -p "\$(dirname "\$FLAG_FILE")"
 if [ ! -f "\${REFIND_CONF}.bak" ]; then
   cp -f "\$REFIND_CONF" "\${REFIND_CONF}.bak"
 fi
+RESTORE_TIMEOUT_FILE="\${RESTORE_FILE}_timeout"
 
 current_selection="\$(grep '^[[:space:]]*default_selection[[:space:]]' "\$REFIND_CONF" || true)"
 if [ -n "\$current_selection" ]; then
   printf '%s\n' "\$current_selection" > "\$RESTORE_FILE"
 else
   printf '# default_selection not set\n' > "\$RESTORE_FILE"
+fi
+
+current_timeout="\$(grep '^[[:space:]]*timeout[[:space:]]' "\$REFIND_CONF" || true)"
+if [ -n "\$current_timeout" ]; then
+  printf '%s\n' "\$current_timeout" > "\$RESTORE_TIMEOUT_FILE"
+else
+  printf 'timeout 10\n' > "\$RESTORE_TIMEOUT_FILE"
 fi
 
 if grep -q '^[[:space:]]*timeout[[:space:]]' "\$REFIND_CONF"; then
