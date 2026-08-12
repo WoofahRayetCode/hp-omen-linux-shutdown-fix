@@ -36,7 +36,7 @@ $batch = @'
 set "EFI=B:"
 mountvol %EFI% /S
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& {
+powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "& {
     $refindSrc = 'B:\EFI\refind\refind_x64.efi'
     $bootmgfw = 'B:\EFI\Microsoft\Boot\bootmgfw.efi'
 
@@ -74,8 +74,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& {
             $c = $c -replace '(?m)^[ \t]*default_selection[ \t]+.*$', 'default_selection "Linux,vmlinuz"'
         }
 
-        # 2. Restore timeout (ensure it is NEVER stuck at -1)
-        $timeoutVal = 'timeout 10'
+        # 2. Restore timeout (ensure it is NEVER stuck at -1; default to timeout 0 for interactive boot menu)
+        $timeoutVal = 'timeout 0'
         if (Test-Path $restoreTimeout) {
             $t = (Get-Content $restoreTimeout -Raw).Trim()
             Remove-Item -Force $restoreTimeout -ErrorAction SilentlyContinue
@@ -110,7 +110,7 @@ mountvol %EFI% /D
 Set-Content -Path $BatPath -Value $batch -Encoding ASCII
 
 Write-Info "Creating startup task..."
-$action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '/c "C:\omen-clean-shutdown.bat"'
+$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\omen-clean-shutdown.bat"'
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
