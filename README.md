@@ -27,6 +27,10 @@ Some HP OMEN laptops do not fully power off when Linux shuts down. The screen go
 4. Windows starts from the primary drive. A scheduled task running as `SYSTEM` sees the flag, restores the saved rEFInd default, deletes the flag, and shuts Windows down.
 5. The laptop is now fully off. Next power-on boots back into Linux on the secondary drive normally.
 
+### Reboot Behavior
+
+Performing a standard **Restart** (from either Windows or Linux) will bring up the **rEFInd boot menu** normally. You do not need to do a full shutdown and manual power-on to switch operating systems when restarting. The automated Windows shutdown sequence is only triggered when initiating a clean shutdown from Linux.
+
 ## Requirements
 
 - UEFI firmware with **Secure Boot disabled**
