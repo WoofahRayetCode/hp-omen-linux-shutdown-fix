@@ -33,6 +33,7 @@ if [ "${ID:-}" != "fedora" ] && [[ "${ID_LIKE:-}" != *fedora* ]] && [ "${ID:-}" 
   info "This installer is written for Fedora/Nobara and Arch/CachyOS, but will keep going."
 fi
 
+# Dual Drive Setup: Windows on Primary Drive (Disk 0), Linux on Secondary Drive (Disk 1)
 EFI_MOUNT="${EFI_MOUNT:-/boot/efi}"
 REFIND_CONF="${REFIND_CONF:-}"
 FLAG_FILE="${FLAG_FILE:-$EFI_MOUNT/EFI/refind/shutdown_flag}"
