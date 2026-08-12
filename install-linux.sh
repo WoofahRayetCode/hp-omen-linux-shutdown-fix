@@ -221,7 +221,7 @@ current_timeout="\$(grep '^[[:space:]]*timeout[[:space:]]' "\$REFIND_CONF" || tr
 if [ -n "\$current_timeout" ]; then
   printf '%s\n' "\$current_timeout" > "\$RESTORE_TIMEOUT_FILE"
 else
-  printf 'timeout 10\n' > "\$RESTORE_TIMEOUT_FILE"
+  printf 'timeout 0\n' > "\$RESTORE_TIMEOUT_FILE"
 fi
 
 if grep -q '^[[:space:]]*timeout[[:space:]]' "\$REFIND_CONF"; then
