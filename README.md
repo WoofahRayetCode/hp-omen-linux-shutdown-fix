@@ -15,9 +15,13 @@ This setup is optimized for dual-disk laptop configurations:
 
 Having Linux on a secondary drive with Windows on the primary drive keeps drive management simple and isolates OS updates while sharing the primary EFI partition for rEFInd boot management.
 
-## Why this exists
+## Video Demonstration
 
-Some HP OMEN laptops do not fully power off when Linux shuts down. The screen goes dark, but the machine may stay warm or keep draining battery. Windows shuts down normally, so this workaround uses Windows as the final step.
+Watch the process in action showing the clean shutdown workaround operating on an HP OMEN dual-drive setup:
+
+[![HP OMEN Linux Clean Shutdown Demonstration](https://img.youtube.com/vi/k8dsuiLzqBs/maxresdefault.jpg)](https://youtu.be/k8dsuiLzqBs)
+
+*(Click thumbnail above or [watch on YouTube](https://youtu.be/k8dsuiLzqBs))*
 
 ## How it works
 
