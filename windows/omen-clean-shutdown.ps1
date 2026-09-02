@@ -58,43 +58,63 @@ function Restore-RefindConf {
     [System.IO.File]::WriteAllText($ConfPath, $c)
 }
 
-Write-Log 'Startup handler began.'
+function Find-EfiRoot {
+    if (Test-Path 'S:\EFI') { return 'S:' }
 
-$foundEfi = $null
-if (Test-Path 'S:\EFI\refind\refind.conf') {
-    $foundEfi = 'S:'
-}
-
-if (-not $foundEfi) {
     foreach ($letter in @('D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','T','U','V','W','X','Y','Z')) {
-        $probe = "${letter}:\EFI\refind\refind.conf"
-        if (Test-Path $probe) {
-            $foundEfi = "${letter}:"
-            break
+        if (Test-Path "${letter}:\EFI") {
+            return "${letter}:"
         }
     }
-}
 
-$mountedTemp = $false
-if (-not $foundEfi) {
-    $foundEfi = 'B:'
+    $mountedTemp = $false
     for ($i = 0; $i -lt 5; $i++) {
         cmd /c "mountvol B: /S" | Out-Null
         if (Test-Path 'B:\EFI') {
-            $mountedTemp = $true
-            break
+            return 'B:'
         }
         Start-Sleep -Seconds 2
     }
-    if (-not (Test-Path 'B:\EFI')) {
-        Write-Log 'Could not mount EFI System Partition.'
-        exit 1
-    }
+    return $null
 }
 
-$efiDrive = $foundEfi
+function Find-FlagPath {
+    param([string]$EfiRoot)
+    $candidates = @(
+        "$EfiRoot\EFI\omen\shutdown_flag",
+        "$EfiRoot\EFI\refind\shutdown_flag",
+        "$EfiRoot\EFI\Microsoft\Boot\shutdown_flag"
+    )
+    foreach ($letter in @('S','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','T','U','V','W','X','Y','Z','B')) {
+        $candidates += @(
+            "${letter}:\EFI\omen\shutdown_flag",
+            "${letter}:\EFI\refind\shutdown_flag"
+        )
+    }
+    foreach ($cand in $candidates) {
+        if ($cand -and (Test-Path $cand)) {
+            return $cand
+        }
+    }
+    return $null
+}
+
+Write-Log 'Startup handler began.'
+
+$efiDrive = Find-EfiRoot
+$mountedTemp = $false
+if ($efiDrive -eq 'B:') {
+    $mountedTemp = $true
+}
+
+if (-not $efiDrive) {
+    Write-Log 'Could not mount EFI System Partition.'
+    exit 1
+}
+
 Write-Log "Using EFI drive $efiDrive"
 
+$flag = Find-FlagPath -EfiRoot $efiDrive
 $confCandidates = @(
     "$efiDrive\EFI\refind\refind.conf",
     "$efiDrive\EFI\Microsoft\Boot\refind.conf",
@@ -108,42 +128,44 @@ foreach ($cand in $confCandidates) {
     }
 }
 
-if (-not $conf) {
-    Write-Log 'refind.conf not found; exiting.'
-    if ($mountedTemp) { cmd /c "mountvol B: /D" | Out-Null }
-    exit 0
-}
-
-$efiDir = Split-Path -Parent $conf
-$flag = Join-Path $efiDir 'shutdown_flag'
-$restore = Join-Path $efiDir 'default_selection_restore'
-$restoreTimeout = Join-Path $efiDir 'default_selection_restore_timeout'
-
-$refindSrc = Join-Path $efiDir 'refind_x64.efi'
-$bootmgfw = Join-Path (Split-Path -Parent $efiDir) 'Microsoft\Boot\bootmgfw.efi'
-if ((Test-Path $refindSrc) -and (Test-Path $bootmgfw)) {
-    $size = (Get-Item $bootmgfw).Length
-    if ($size -gt 1048576) {
-        Write-Log "bootmgfw.efi is $size bytes; restoring rEFInd over it."
-        Copy-Item -Force $bootmgfw (Join-Path (Split-Path -Parent $efiDir) 'Microsoft\Boot\bootmgfw.efi.bak')
-        Copy-Item -Force $refindSrc $bootmgfw
+if ($conf) {
+    $efiDir = Split-Path -Parent $conf
+    $restore = Join-Path $efiDir 'default_selection_restore'
+    $restoreTimeout = Join-Path $efiDir 'default_selection_restore_timeout'
+    $refindSrc = Join-Path $efiDir 'refind_x64.efi'
+    $bootmgfw = Join-Path $efiDrive 'EFI\Microsoft\Boot\bootmgfw.efi'
+    if ((Test-Path $refindSrc) -and (Test-Path $bootmgfw)) {
+        $size = (Get-Item $bootmgfw).Length
+        if ($size -gt 1048576) {
+            Write-Log "bootmgfw.efi is $size bytes; restoring rEFInd over it."
+            Copy-Item -Force $bootmgfw (Join-Path (Split-Path -Parent $bootmgfw) 'bootmgfw.efi.bak')
+            Copy-Item -Force $refindSrc $bootmgfw
+        }
     }
 }
 
-if (Test-Path $flag) {
-    Write-Log 'shutdown_flag present; restoring rEFInd and powering off.'
+if ($flag) {
+    Write-Log "shutdown_flag present at $flag; powering off."
     Remove-Item -Force $flag -ErrorAction SilentlyContinue
-    Restore-RefindConf -ConfPath $conf -Restore $restore -RestoreTimeout $restoreTimeout
+    if ($conf) {
+        $efiDir = Split-Path -Parent $conf
+        Restore-RefindConf -ConfPath $conf `
+            -Restore (Join-Path $efiDir 'default_selection_restore') `
+            -RestoreTimeout (Join-Path $efiDir 'default_selection_restore_timeout')
+    }
     if ($mountedTemp) { cmd /c "mountvol B: /D" | Out-Null }
     shutdown /s /f /t 0
     exit 0
 }
 
-if (Test-Path $conf) {
+if ($conf) {
     $c = Get-Content $conf -Raw
     if ($c -match '(?m)^[ \t]*timeout[ \t]+-1') {
         Write-Log 'Orphaned timeout -1; restoring rEFInd defaults.'
-        Restore-RefindConf -ConfPath $conf -Restore $restore -RestoreTimeout $restoreTimeout
+        $efiDir = Split-Path -Parent $conf
+        Restore-RefindConf -ConfPath $conf `
+            -Restore (Join-Path $efiDir 'default_selection_restore') `
+            -RestoreTimeout (Join-Path $efiDir 'default_selection_restore_timeout')
     }
 }
 
