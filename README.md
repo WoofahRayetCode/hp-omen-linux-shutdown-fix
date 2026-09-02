@@ -1,11 +1,16 @@
 # HP OMEN Linux Clean Shutdown Fix (Dual-Drive Setup)
 
-This repo packages the HP OMEN shutdown workaround into two scripts:
+This repo packages the HP OMEN shutdown workaround into two installers plus a few source files:
 
 - `install-linux.sh` for Nobara/Fedora, CachyOS, Arch, and other systemd-based distros running on the secondary drive
 - `install-windows.ps1` for Windows running on the primary drive
+- `windows/omen-clean-shutdown.ps1`, `linux/omen-shutdown-diagnose.sh`, and `acpi/ssdt-omen-s5.asl` (template only)
 
 The goal is simple: when you shut down from Linux, the laptop reboots into Windows first, Windows finishes the power-off correctly, and the machine ends up fully off.
+
+This is a **workaround**, not an HP firmware fix. Recent OMEN 16 (especially **16-ap0xxx** with NVIDIA RTX 50-series) often never reach ACPI **S5** from Linux: systemd hits `poweroff.target` while the discrete GPU rail stays at roughly **15–19 W**, the chassis stays warm, and the battery drains. Kernel parameters (`acpi_osi`, `reboot=pci`, `reboot=efi`) do not restore S5. BIOS updates through F.13 have not either. Windows 11 on the same hardware typically does complete S5.
+
+**Safety:** a black screen after Linux “Shut Down” is not proof of S5. Do not bag the laptop until the power LED is off and the chassis is cold.
 
 ## Dual-Drive Architecture
 
@@ -25,7 +30,7 @@ Watch the process in action showing the clean shutdown workaround operating on a
 
 ## How it works
 
-1. You trigger the shutdown from Linux (OMEN AI/Copilot key, shortcut, or terminal).
+1. You trigger shutdown from Linux (OMEN AI/Copilot key, desktop Shut Down, `systemctl poweroff`, or the launcher). The installer intercepts `poweroff.target` / `halt.target` so the DE menu is included.
 2. The Linux script saves the current rEFInd `default_selection` and `timeout`, sets `default_selection "Windows"` and `timeout -1` so rEFInd boots Windows immediately during the automated shutdown cycle.
 3. The script creates a flag file on the shared EFI partition and reboots.
 4. Windows starts from the primary drive. A scheduled task running as `SYSTEM` sees the flag, restores the saved rEFInd default and timeout (`timeout 0` for persistent interactive boot menu), deletes the flag, and shuts Windows down.
@@ -56,12 +61,16 @@ The Linux installer auto-detects the rEFInd binary path used by Fedora/Nobara (`
 
 | File | Purpose |
 |---|---|
-| `install-linux.sh` | Set up the Linux side (secondary drive) |
+| `install-linux.sh` | Set up the Linux side (secondary drive). Optional `--acpi-s5` copies an experimental SSDT template only. |
 | `install-windows.ps1` | Set up the Windows side (primary drive) and fix the hardware clock timezone |
-| `C:\omen-clean-shutdown.ps1` | Windows startup handler script (with dynamic EFI volume discovery) |
-| `C:\omen-clean-shutdown.bat` | Legacy batch wrapper executing PowerShell script |
-| `/usr/local/bin/omen-clean-shutdown-launcher` | Linux shortcut target |
-| `/usr/local/bin/omen-clean-shutdown.sh` | Linux shutdown logic |
+| `windows/omen-clean-shutdown.ps1` | Source for the Windows startup handler (copied to `C:\omen-clean-shutdown.ps1`) |
+| `linux/omen-shutdown-diagnose.sh` | Source for the diagnose helper (copied to `/usr/local/bin/omen-shutdown-diagnose`) |
+| `acpi/ssdt-omen-s5.asl` | **Experimental** S5-only SSDT template (`PG00._OFF` / PEGP `_PS3`). Copied with `--acpi-s5`; not loaded automatically. |
+| `C:\omen-clean-shutdown.ps1` | Installed Windows startup handler (dynamic EFI discovery, logs under `%ProgramData%\omen-clean-shutdown\`) |
+| `C:\omen-clean-shutdown.bat` | Thin wrapper that runs the `.ps1` |
+| `/usr/local/bin/omen-clean-shutdown-launcher` | Linux shortcut target (shows a confirm dialog) |
+| `/usr/local/bin/omen-clean-shutdown.sh` | Linux shutdown logic (writes EFI flag, then irreversible reboot into Windows) |
+| `/usr/local/bin/omen-shutdown-diagnose` | Prints DSDT method names, ACPI errors, NVIDIA PCI power, last shutdown journal |
 | `/usr/local/bin/refind-protect.sh` | Restores rEFInd if Windows overwrites the boot manager |
 
 ## Installation Guide
@@ -77,7 +86,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\install-windows.ps1
 ```
 
-This sets up the `OMEN Clean Shutdown` startup task (with forced process termination `/f`), disables Windows Fast Startup/Hibernation (`powercfg /h off`), prevents pre-login application launching, configures the `RealTimeIsUniversal` registry key so Windows treats the hardware clock as UTC, and creates an elevated **"Reboot to rEFInd"** desktop shortcut that instantly restarts Windows back into the rEFInd boot menu when double-clicked.
+This copies `windows/omen-clean-shutdown.ps1` to `C:\omen-clean-shutdown.ps1` (the path the scheduled task actually runs), writes a thin `.bat` wrapper, disables Windows Fast Startup/Hibernation (`powercfg /h off`), prevents pre-login application launching, configures the `RealTimeIsUniversal` registry key so Windows treats the hardware clock as UTC, and creates an elevated **"Reboot to rEFInd"** desktop shortcut. Logs go to `%ProgramData%\omen-clean-shutdown\omen-clean-shutdown.log`.
 
 ### 2. On Linux (Secondary Drive - Disk 1)
 
@@ -99,12 +108,32 @@ Then run the Linux installer. The script auto-mounts the EFI partition at `/boot
 sudo bash ./install-linux.sh
 ```
 
-If the script lives on a mounted Windows drive/partition, you can run it directly:
+Optional (does **not** replace the Windows reboot path; only installs a template):
 
 ```bash
-cd /mnt/windows/Users/ericp/OneDrive/Documents/GitHub/hp-omen-linux-shutdown-fix
+sudo bash ./install-linux.sh --acpi-s5
+```
+
+If the script lives on a mounted Windows drive/partition, run it from that clone, for example:
+
+```bash
+cd /mnt/windows/Users/<you>/.../hp-omen-linux-shutdown-fix
 sudo bash ./install-linux.sh
 ```
+
+Re-run `install-windows.ps1` after pulling this repo so `C:\omen-clean-shutdown.ps1` matches the source file (older installs only wrote a `.bat`).
+
+### Escape hatch
+
+To use a native Linux poweroff (firmware S5, which may leave the dGPU rail on):
+
+```bash
+sudo touch /etc/omen-native-poweroff
+```
+
+Remove that file to restore the Windows-reboot intercept.
+
+Logs: `/var/log/omen-clean-shutdown.log`. Diagnose: `sudo omen-shutdown-diagnose`.
 
 ## Use & OMEN Button Shortcut Setup
 
@@ -114,7 +143,7 @@ When running `sudo bash ./install-linux.sh`, the installer will attempt to auto-
 
 1. The installer prompts: `Press Enter, then press the Copilot/AI button once within 8 seconds.`
 2. Press **Enter** in your terminal, then immediately press the **OMEN key** on your laptop.
-3. The script detects the key press and configures the shortcut automatically for **GNOME** or **KDE Plasma**.
+3. The script detects the key press and configures the shortcut automatically for **GNOME** or **KDE Plasma**. On GNOME it appends a free `customN` slot and does not overwrite `custom0`.
 
 ### Manual Setup
 
@@ -143,7 +172,7 @@ If auto-detection fails or you prefer to configure it manually, bind your OMEN k
 
 ### Confirmation Dialog
 
-When triggered via the OMEN key or shortcut, a popup dialog (`kdialog`, `zenity`, or `yad`) will ask for confirmation before initiating the shutdown process to prevent accidental keypresses.
+When triggered via the OMEN key or the launcher, a popup dialog (`kdialog`, `zenity`, or `yad`) will ask for confirmation. Desktop **Shut Down** / `systemctl poweroff` skip that dialog and go straight through the `poweroff.target` intercept.
 
 ## Remove
 
@@ -170,7 +199,7 @@ You can override paths before running `install-linux.sh`:
 | `REFIND_SOURCE` | auto-detected | Path to `refind_x64.efi` |
 | `REFIND_TARGET` | `$EFI_MOUNT/EFI/Microsoft/Boot/bootmgfw.efi` | Where to restore rEFInd if Windows overwrites it |
 | `FLAG_FILE` | `$EFI_MOUNT/EFI/refind/shutdown_flag` | Flag file that tells Windows to finish shutdown |
-| `RESTORE_FILE` | `$EFI_MOUNT/EFI/refind/default_selection_restore` | Saved rEFInd default selection |
+| `RESTORE_FILE` | `$EFI_MOUNT/EFI/refind/default_selection_restore` | Saved rEFInd default selection (timeout is saved as `${RESTORE_FILE}_timeout`) |
 
 ## Self-Healing Bootloader Architecture
 
@@ -217,9 +246,27 @@ If restarting or powering on boots straight into Windows without showing the rEF
 
 ---
 
+## Experimental native S5 (optional)
+
+Do not ship or load a precompiled AML for every OMEN. Tables differ by board and BIOS.
+
+On some 16-ap0xxx units the dGPU rail is ACPI power resource `PG00` on `\_SB.PCI0.GPP0`. Firmware `PG00._OFF` works but Linux never calls it at S5 (`pci_device_shutdown` can even power the rail back up). Other units abort `_SB.WMID.WQBZ` with `AE_AML_BUFFER_LIMIT` so PEGP never reaches `_PS3`.
+
+`acpi/ssdt-omen-s5.asl` is a **template** that calls PEGP `_PS3` and `PG00._OFF` from `_PTS(5)` if those objects exist. Compile with `iasl` only after you dump **your** DSDT and confirm the paths. Load it as a **second** bootloader entry (Limine/mkinitcpio `acpi_override` or dracut acpi hook). Keep the stock kernel entry and keep this repo’s Windows-reboot path until the power LED goes off and the chassis is cold.
+
+A more complete experimental toolkit (S5-only vs Combined WQBZ bounding), validated on a specific board/BIOS, is [OMEN ACPI Toolkit](https://github.com/paolo-de-marinis/omen-acpi) (current release [v2.4.0](https://github.com/paolo-de-marinis/omen-acpi/releases/tag/v2.4.0); CachyOS + Limine, physically checked on OMEN MAX 16-ap0006sl board 8E35 / BIOS F.13).
+
+BIOS **integrated-GPU only** can also reach a real off state on some units (you lose the dGPU). Userspace `acpi_call` `_OFF` is not enough.
+
+Related issues that are **not** this bug: `nvidia_drm modeset=1 fbdev=0` (fbcon deadlock); HP SoftPaq SP152972 (Windows 11 hang after NVIDIA 572.40 on 16-wd/wf).
+
+## Limine / GRUB / systemd-boot
+
+The automated flag + `refind.conf` rewrite still requires **rEFInd**. CachyOS often defaults to Limine. Until Limine/GRUB one-shot Windows boot is implemented here, install rEFInd on the primary ESP as documented, or use [omen-acpi](https://github.com/paolo-de-marinis/omen-acpi) experimental entries on Limine.
+
 ## Notes
 
-- This is a workaround, not a firmware fix.
+- This is a workaround, not a firmware fix. Sources: [Arch BBS](https://bbs.archlinux.org/viewtopic.php?id=313030), [Fedora](https://discussion.fedoraproject.org/t/technical-issue-incomplete-shutdown-on-hp-omen-16-ap0038ns/184041), [CachyOS](https://discuss.cachyos.org/t/technical-issue-incomplete-shutdown-on-hp-omen-16-ap0038ns/26236), [NVIDIA forum](https://forums.developer.nvidia.com/t/hp-omen-16-rtx-5060-battery-drains-after-shutdown-on-linux-gps-acpi-dsm-bug/364074), [HP Community](https://h30434.www3.hp.com/t5/Gaming-Notebooks/After-shuting-down-from-a-Linux-distribution-HP-OMEN-16/td-p/9624996).
 - **Battery Care / 80% Charge Limit:** HP's 80% battery limit / battery care mode in BIOS/OMEN Gaming Hub works cleanly alongside this workaround. The scheduled task is configured to run on both battery and AC power (`AllowStartIfOnBatteries`).
 - **Timeout & Selection Preservation:** The shutdown script saves your current rEFInd menu timeout and default OS selection before temporarily setting `timeout -1` and `default_selection "Windows"` for the reboot, and restores both exact settings on the Windows side.
 - **Windows Fast Startup & Hibernation Disabling (`hiberfil.sys`)**: Fast Startup and Hibernation are automatically disabled by `install-windows.ps1` (`powercfg /h off` and `HiberbootEnabled = 0`). Removing `hiberfil.sys` prevents Windows from skipping the rEFInd UEFI boot loader upon cold boot.
