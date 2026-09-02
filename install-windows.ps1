@@ -30,6 +30,7 @@ if ($Uninstall) {
     Remove-Item -Force -ErrorAction SilentlyContinue $BatPath
     $desktopPath = [System.Environment]::GetFolderPath('Desktop')
     Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $desktopPath 'Reboot to rEFInd.lnk')
+    Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $desktopPath 'Reboot to Linux boot manager.lnk')
     Write-Info 'Removed.'
     exit 0
 }
@@ -71,36 +72,56 @@ $userDevicePath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Syst
 if (-not (Test-Path $userDevicePath)) { New-Item -Path $userDevicePath -Force | Out-Null }
 Set-ItemProperty -Path $userDevicePath -Name 'UserDeviceSignIn' -Value 0 -Type DWord -Force
 
-Write-Info 'Creating "Reboot to rEFInd" Desktop Shortcut...'
+Write-Info 'Creating "Reboot to Linux boot manager" Desktop Shortcut...'
 $desktopPath = [System.Environment]::GetFolderPath('Desktop')
-$shortcutPath = Join-Path $desktopPath 'Reboot to rEFInd.lnk'
+$shortcutPath = Join-Path $desktopPath 'Reboot to Linux boot manager.lnk'
+$legacyShortcutPath = Join-Path $desktopPath 'Reboot to rEFInd.lnk'
 
-$refindGuid = $null
+$linuxGuid = $null
 $bcdOutput = bcdedit /enum firmware 2>$null
 if ($bcdOutput) {
     $currentGuid = $null
+    $currentDesc = ''
+    $currentPath = ''
+    $entries = @()
     foreach ($line in $bcdOutput) {
         if ($line -match 'identifier\s+\{([a-f0-9\-]+)\}') {
+            if ($currentGuid) {
+                $entries += [pscustomobject]@{ Guid = $currentGuid; Desc = $currentDesc; Path = $currentPath }
+            }
             $currentGuid = $matches[1]
+            $currentDesc = ''
+            $currentPath = ''
         }
-        if ($currentGuid -and ($line -match 'rEFInd' -or $line -match '\\EFI\\refind\\refind_x64\.efi')) {
-            $refindGuid = "{$currentGuid}"
+        if ($line -match 'description\s+(.+)$') { $currentDesc = $matches[1].Trim() }
+        if ($line -match 'path\s+(.+)$') { $currentPath = $matches[1].Trim() }
+    }
+    if ($currentGuid) {
+        $entries += [pscustomobject]@{ Guid = $currentGuid; Desc = $currentDesc; Path = $currentPath }
+    }
+    foreach ($pattern in @('rEFInd', 'limine', 'GRUB', 'CachyOS', 'Fedora', 'ubuntu', 'systemd-boot', 'Linux')) {
+        $hit = $entries | Where-Object { $_.Desc -match $pattern -or $_.Path -match $pattern } | Select-Object -First 1
+        if ($hit) {
+            $linuxGuid = "{$($hit.Guid)}"
             break
         }
     }
 }
 
-if (-not $refindGuid) {
-    $refindGuid = '{bootmgr}'
+if (-not $linuxGuid) {
+    $linuxGuid = '{bootmgr}'
 }
 
 $wshShell = New-Object -ComObject WScript.Shell
 $shortcut = $wshShell.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = 'powershell.exe'
-$shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -Command `"bcdedit /set {fwbootmgr} bootsequence $refindGuid; shutdown /r /t 0`""
-$shortcut.Description = 'Reboot immediately into the rEFInd Boot Manager'
+$shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -Command `"bcdedit /set {fwbootmgr} bootsequence $linuxGuid; shutdown /r /t 0`""
+$shortcut.Description = 'Reboot immediately into the Linux boot manager (Limine, GRUB, or rEFInd)'
 $shortcut.IconLocation = 'shell32.dll,238'
 $shortcut.Save()
+if (Test-Path $legacyShortcutPath) {
+    Remove-Item -Force $legacyShortcutPath -ErrorAction SilentlyContinue
+}
 
 $bytes = [System.IO.File]::ReadAllBytes($shortcutPath)
 $bytes[21] = $bytes[21] -bor 0x20
