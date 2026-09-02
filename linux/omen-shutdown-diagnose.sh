@@ -46,6 +46,11 @@ if command -v journalctl >/dev/null 2>&1; then
   journalctl -b -1 -n 40 --no-pager 2>/dev/null | grep -iE 'poweroff|reboot|omen-clean|Reached target' || true
 fi
 echo
+if [ -f /var/log/omen-clean-shutdown.log ]; then
+  echo "=== omen-clean-shutdown.log (tail) ==="
+  tail -n 20 /var/log/omen-clean-shutdown.log || true
+fi
+echo
 
 echo "=== Filesystems ==="
 findmnt -n -o TARGET,FSTYPE,SOURCE / /boot /boot/efi /efi 2>/dev/null || true
