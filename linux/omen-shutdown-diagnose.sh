@@ -47,11 +47,48 @@ if command -v journalctl >/dev/null 2>&1; then
 fi
 echo
 
+echo "=== Filesystems ==="
+findmnt -n -o TARGET,FSTYPE,SOURCE / /boot /boot/efi /efi 2>/dev/null || true
+echo
+
+echo "=== Bootloader / EFI ==="
+if [ -f /usr/local/lib/omen-clean-shutdown/omen-boot-lib.sh ]; then
+  # shellcheck source=omen-boot-lib.sh
+  . /usr/local/lib/omen-clean-shutdown/omen-boot-lib.sh
+  if [ -f "$OMEN_ENV_FILE" ]; then
+    echo "env: $OMEN_ENV_FILE"
+    grep -E '^[A-Z_]+=' "$OMEN_ENV_FILE" || true
+    echo
+  fi
+  efi_mount="$(detect_linux_efi_mount || true)"
+  echo "linux efi/boot mount: ${efi_mount:-unknown}"
+  echo "bootloader: $(detect_bootloader "$efi_mount")"
+  echo "limine.conf: $(find_limine_conf "$efi_mount" || echo none)"
+  echo "grub.cfg: $(find_grub_cfg || echo none)"
+  echo "refind.conf: $(find_refind_conf_in "$efi_mount" || echo none)"
+  echo "windows ESP: $(detect_windows_esp_dev || echo none)"
+  echo "windows bootnum: $(detect_windows_bootnum || echo none)"
+  ge="$(grubenv_path || true)"
+  if [ -n "$ge" ]; then
+    echo "grubenv: $ge on $(fstype_of_path "$(dirname "$ge")")"
+    if grubenv_is_writable_at_boot; then
+      echo "grub-reboot: allowed"
+    else
+      echo "grub-reboot: skipped (Btrfs/XFS/other — use BootNext)"
+    fi
+  fi
+fi
+if command -v efibootmgr >/dev/null 2>&1; then
+  echo
+  efibootmgr 2>/dev/null | head -n 20 || true
+fi
+echo
+
 echo "=== Workaround files ==="
-for p in /boot/efi /efi /boot; do
+for p in /boot/efi /efi /boot /run/omen-windows-esp; do
   if [ -d "$p/EFI" ]; then
     echo "EFI mount candidate: $p"
-    ls -l "$p/EFI/refind/shutdown_flag" "$p/EFI/refind/refind.conf" 2>/dev/null || true
+    ls -l "$p/EFI/omen/shutdown_flag" "$p/EFI/refind/shutdown_flag" "$p/EFI/refind/refind.conf" "$p/limine.conf" 2>/dev/null || true
   fi
 done
 echo "native-poweroff flag: $( [ -e /etc/omen-native-poweroff ] && echo present || echo absent )"
