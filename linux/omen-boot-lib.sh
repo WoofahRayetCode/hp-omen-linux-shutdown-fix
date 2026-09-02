@@ -240,16 +240,18 @@ detect_bootloader() {
 }
 
 detect_windows_bootnum() {
-  if [ -n "${WINDOWS_BOOTNUM:-}" ]; then
-    printf '%s\n' "$WINDOWS_BOOTNUM"
-    return 0
-  fi
-  command -v efibootmgr >/dev/null 2>&1 || return 1
+  command -v efibootmgr >/dev/null 2>&1 || {
+    if [ -n "${WINDOWS_BOOTNUM:-}" ]; then
+      printf '%s\n' "$WINDOWS_BOOTNUM"
+      return 0
+    fi
+    return 1
+  }
   local line num
   while IFS= read -r line; do
     case "$line" in
       Boot[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]*)
-        if printf '%s' "$line" | grep -qiE 'Windows Boot Manager|bootmgfw\.efi'; then
+        if printf '%s' "$line" | grep -qiE 'Windows Boot Manager|\\\\EFI\\\\Microsoft\\\\Boot\\\\bootmgfw\.efi|/EFI/Microsoft/Boot/bootmgfw\.efi|bootmgfw\.efi'; then
           num="${line#Boot}"
           num="${num%%[^0-9A-Fa-f]*}"
           printf '%s\n' "$num"
@@ -258,6 +260,10 @@ detect_windows_bootnum() {
         ;;
     esac
   done < <(efibootmgr -v 2>/dev/null || true)
+  if [ -n "${WINDOWS_BOOTNUM:-}" ]; then
+    printf '%s\n' "$WINDOWS_BOOTNUM"
+    return 0
+  fi
   return 1
 }
 
