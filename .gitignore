@@ -1,0 +1,24 @@
+# Local ACPI dumps and compiled AML (machine-specific; do not publish)
+*.aml
+*.dat
+dsdt.dsl
+ssdt*.dsl
+!acpi/ssdt-omen-s5.asl
+
+# Editor / OS junk
+*~
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and backups produced on a live install
+*.log
+*.bak
+*.orig
+
+# IDE
+.idea/
+.vscode/
+*.code-workspace
