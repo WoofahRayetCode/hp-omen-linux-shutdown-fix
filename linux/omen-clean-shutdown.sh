@@ -24,18 +24,34 @@ if [ -e /etc/omen-native-poweroff ]; then
   exit 0
 fi
 
+# Env file values can go stale after Windows/firmware updates. Re-probe NVRAM
+# and the Windows ESP, and only fall back to the saved values.
+_fallback_esp="${WINDOWS_ESP_DEV:-}"
+_fallback_bootnum="${WINDOWS_BOOTNUM:-}"
+_forced_method="${ONESHOT_METHOD:-}"
+WINDOWS_ESP_DEV=""
+WINDOWS_BOOTNUM=""
+
 EFI_MOUNT="$(detect_linux_efi_mount)"
 BOOTLOADER="${BOOTLOADER:-$(detect_bootloader "$EFI_MOUNT")}"
-WINDOWS_ESP_DEV="${WINDOWS_ESP_DEV:-$(detect_windows_esp_dev || true)}"
-WINDOWS_BOOTNUM="${WINDOWS_BOOTNUM:-$(detect_windows_bootnum || true)}"
-ONESHOT_METHOD="${ONESHOT_METHOD:-$(choose_oneshot_method "$BOOTLOADER" "$WINDOWS_BOOTNUM")}"
+WINDOWS_ESP_DEV="$(detect_windows_esp_dev || true)"
+WINDOWS_ESP_DEV="${WINDOWS_ESP_DEV:-$_fallback_esp}"
+WINDOWS_BOOTNUM="$(detect_windows_bootnum || true)"
+WINDOWS_BOOTNUM="${WINDOWS_BOOTNUM:-$_fallback_bootnum}"
+if [ -n "$_forced_method" ]; then
+  ONESHOT_METHOD="$_forced_method"
+else
+  ONESHOT_METHOD="$(choose_oneshot_method "$BOOTLOADER" "$WINDOWS_BOOTNUM")"
+fi
 REFIND_CONF="${REFIND_CONF:-$(find_refind_conf_in "$EFI_MOUNT" || true)}"
 RESTORE_FILE="${RESTORE_FILE:-}"
 
 log "starting shutdown workaround bootloader=$BOOTLOADER method=$ONESHOT_METHOD esp=${WINDOWS_ESP_DEV:-none} bootnum=${WINDOWS_BOOTNUM:-none}"
 
 esp_root="$(ensure_windows_esp_mounted_rw "${WINDOWS_ESP_DEV:-}" || true)"
-if [ -z "$esp_root" ] && [ -n "${EFI_MOUNT:-}" ]; then
+# Never write the flag to the Linux ESP unless it actually holds bootmgfw.efi.
+# Dual-drive OMEN setups have two ESPs; Windows will not see a flag on Disk 1.
+if [ -z "$esp_root" ] && [ -n "${EFI_MOUNT:-}" ] && has_windows_bootmgr "$EFI_MOUNT"; then
   esp_root="$EFI_MOUNT"
 fi
 if [ -z "$esp_root" ]; then
@@ -43,8 +59,19 @@ if [ -z "$esp_root" ]; then
   log "failed to mount Windows ESP"
   exit 1
 fi
+if ! has_windows_bootmgr "$esp_root"; then
+  echo "Mounted $esp_root but it has no Windows Boot Manager (bootmgfw.efi)." >&2
+  log "refusing to write shutdown_flag on non-Windows ESP at $esp_root"
+  exit 1
+fi
 
-flag_file="${FLAG_FILE:-$esp_root/$OMEN_FLAG_RELPATH}"
+flag_file="$esp_root/$OMEN_FLAG_RELPATH"
+# Honor FLAG_FILE only when it lives on the Windows ESP we just mounted.
+if [ -n "${FLAG_FILE:-}" ]; then
+  case "$FLAG_FILE" in
+    "$esp_root"/*) flag_file="$FLAG_FILE" ;;
+  esac
+fi
 mkdir -p "$(dirname "$flag_file")"
 touch "$flag_file"
 
@@ -84,11 +111,47 @@ fi
 
 sync
 
-set_bootnext() {
+efibootmgr_cmd() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 8 efibootmgr "$@"
+  else
+    efibootmgr "$@"
+  fi
+}
+
+normalize_bootnum() {
   local num="${1:-}"
+  num="${num#Boot}"
+  num="${num%%[^0-9A-Fa-f]*}"
+  printf '%s' "$num"
+}
+
+set_bootnext() {
+  local num
+  num="$(normalize_bootnum "${1:-}")"
   [ -n "$num" ] || return 1
   command -v efibootmgr >/dev/null 2>&1 || return 1
-  efibootmgr --bootnext "$num" >/dev/null
+  efibootmgr_cmd --bootnext "$num" >/dev/null
+}
+
+bootnext_is_set() {
+  command -v efibootmgr >/dev/null 2>&1 || return 1
+  efibootmgr_cmd 2>/dev/null | grep -qiE '^BootNext:'
+}
+
+prefer_efi_reboot() {
+  # HP firmware often ignores BootNext across an ACPI reset. EFI ResetSystem
+  # is what actually consumes BootNext and boots Windows Boot Manager.
+  if [ -w /sys/kernel/reboot/mode ]; then
+    echo efi >/sys/kernel/reboot/mode 2>/dev/null || true
+    log "reboot mode=$(cat /sys/kernel/reboot/mode 2>/dev/null || echo unknown)"
+  fi
+}
+
+unmount_temp_windows_esp() {
+  if [ -n "${OMEN_ESP_MOUNTPOINT:-}" ] && findmnt -n "$OMEN_ESP_MOUNTPOINT" >/dev/null 2>&1; then
+    umount "$OMEN_ESP_MOUNTPOINT" 2>/dev/null || umount -l "$OMEN_ESP_MOUNTPOINT" 2>/dev/null || true
+  fi
 }
 
 set_loader_oneshot() {
@@ -161,9 +224,32 @@ esac
 
 if [ "$oneshot_ok" -eq 0 ]; then
   echo "Could not set a one-shot Windows boot (BootNext / bootctl / grub-reboot)." >&2
-  log "failed to set one-shot Windows boot"
+  log "failed to set one-shot Windows boot; efibootmgr: $(efibootmgr_cmd 2>/dev/null | tr '\n' ' ' || echo none)"
+  rm -f "$flag_file"
   exit 1
 fi
 
+if [ -n "$WINDOWS_BOOTNUM" ]; then
+  if bootnext_is_set; then
+    log "BootNext confirmed for Boot$(normalize_bootnum "$WINDOWS_BOOTNUM")"
+  else
+    log "warning: efibootmgr --bootnext did not stick; firmware may ignore BootNext"
+  fi
+fi
+
+if [ ! -f "$flag_file" ]; then
+  echo "shutdown_flag was not written to $flag_file" >&2
+  log "flag missing after write at $flag_file"
+  exit 1
+fi
+
+prefer_efi_reboot
+unmount_temp_windows_esp
+sync
+
 log "flag written at $flag_file; rebooting into Windows"
-systemctl start reboot.target --job-mode=replace-irreversibly
+# --no-block is required: this unit used to Conflicts=reboot.target, which
+# deadlocked (reboot waited to stop us, we waited for reboot). Even without
+# Conflicts, blocking here can stall the poweroff→reboot conversion.
+systemctl start reboot.target --job-mode=replace-irreversibly --no-block
+exit 0
