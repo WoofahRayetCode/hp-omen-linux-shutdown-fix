@@ -244,8 +244,26 @@ If restarting or powering on boots straight into Windows without showing Limine,
      ```
    - If needed, put the Linux boot manager first in firmware boot order (or use the **Reboot to Linux boot manager** shortcut). From Linux: `sudo efibootmgr -o <limine-or-grub>,<windows>`.
 
+### Shutdown from Linux does not reboot into Windows, then power off
+
+The workaround is: Linux writes `EFI/omen/shutdown_flag` on the **Windows** ESP, sets firmware `BootNext` to Windows Boot Manager, **reboots** (not poweroff), Windows sees the flag and issues a real S5 shutdown.
+
+If that hop never happens, re-run both installers (the Linux unit file and Windows handler must be updated) and check:
+
+1. **Linux log** `/var/log/omen-clean-shutdown.log` — you should see `flag written` and `rebooting into Windows`. If you see `failed to set one-shot Windows boot` or `failed to mount Windows ESP`, `BootNext` never stuck or the flag went to the wrong disk.
+2. **`sudo omen-shutdown-diagnose`** — confirm `windows ESP` is the Disk 0 FAT32 partition that contains `bootmgfw.efi`, and `windows bootnum` matches `efibootmgr`.
+3. **Windows log** `%ProgramData%\omen-clean-shutdown\omen-clean-shutdown.log` — on the Windows hop it should say `shutdown_flag present` then power off. `Normal startup; no shutdown flag` means Linux wrote the flag on the Linux ESP, or the Windows task ran before the ESP was visible (the handler now scans every GPT ESP).
+4. **Do not use** `sudo touch /etc/omen-native-poweroff` unless you want a native Linux poweroff (that path skips Windows and often leaves the dGPU rail on).
+
+Known causes this repo now guards against:
+
+- systemd deadlocking because `omen-clean-shutdown.service` used to `Conflicts=reboot.target` while converting poweroff into reboot
+- HP firmware ignoring `BootNext` on an ACPI reset (the script now prefers `/sys/kernel/reboot/mode = efi`)
+- Dual-drive setups writing the flag to the Linux ESP (Windows never sees it)
+- The Windows handler aborting on empty CD/card-reader drive letters, or only looking at `mountvol /S` (the firmware ESP is the Linux one if Windows was chainloaded)
+
 ### Windows Stays on Login / PIN Screen
-- **Does a PIN code block shutdown?** No. The Windows task runs under the `SYSTEM` background account on startup before user login.
+- **Does a PIN code block shutdown?** No. The Windows task runs under the `SYSTEM` background account on startup before user login. A second AtLogOn trigger is a fallback if the boot trigger is delayed.
 - **Testing the Windows Task:** You can manually verify that the Windows scheduled task is working by running this command in PowerShell (Admin) and then restarting:
   ```powershell
   mountvol B: /S; New-Item -Path "B:\EFI\omen\shutdown_flag" -ItemType File -Force; mountvol B: /D
