@@ -236,14 +236,20 @@ EOF
 [Unit]
 Description=OMEN clean shutdown via Windows
 DefaultDependencies=no
-Conflicts=reboot.target
-Before=poweroff.target halt.target
+# Do not Conflicts=reboot.target. This unit converts poweroff into reboot
+# (BootNext → Windows → S5). A Conflicts= line deadlocks: reboot.target
+# waits to stop this service, while ExecStart waits for reboot.target.
+Before=poweroff.target halt.target shutdown.target
 ConditionPathExists=!/etc/omen-native-poweroff
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/omen-clean-shutdown.sh
-RemainAfterExit=yes
+# RemainAfterExit would keep the unit "active" and skip SuccessAction
+# (that hook runs when the unit *stops* successfully).
+KillMode=none
+TimeoutStartSec=90
+SuccessAction=reboot
 
 [Install]
 WantedBy=poweroff.target halt.target
@@ -251,6 +257,13 @@ EOF
 
   mkdir -p /etc/systemd/system/poweroff.target.d
   cat >/etc/systemd/system/poweroff.target.d/omen-clean-shutdown.conf <<'EOF'
+[Unit]
+Wants=omen-clean-shutdown.service
+After=omen-clean-shutdown.service
+EOF
+
+  mkdir -p /etc/systemd/system/halt.target.d
+  cat >/etc/systemd/system/halt.target.d/omen-clean-shutdown.conf <<'EOF'
 [Unit]
 Wants=omen-clean-shutdown.service
 After=omen-clean-shutdown.service
@@ -379,6 +392,8 @@ remove_files() {
   rm -f /etc/systemd/system/refind-protect.service
   rm -f /etc/systemd/system/poweroff.target.d/omen-clean-shutdown.conf
   rmdir /etc/systemd/system/poweroff.target.d 2>/dev/null || true
+  rm -f /etc/systemd/system/halt.target.d/omen-clean-shutdown.conf
+  rmdir /etc/systemd/system/halt.target.d 2>/dev/null || true
   rm -f /etc/sudoers.d/omen-clean-shutdown
   rm -rf /usr/local/share/omen-clean-shutdown
   if [ -n "${REFIND_CONF:-}" ] && [ -f "${REFIND_CONF}.bak" ]; then
