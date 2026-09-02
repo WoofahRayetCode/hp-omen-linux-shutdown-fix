@@ -44,7 +44,7 @@ Copy-Item -Force $SourcePs1 $Ps1Path
 
 $batch = @"
 @echo off
-powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$Ps1Path"
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "$Ps1Path"
 "@
 Set-Content -Path $BatPath -Value $batch -Encoding ASCII
 
@@ -53,12 +53,23 @@ if (-not (Test-Path $LogDir)) {
     New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
 }
 
-$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$Ps1Path`""
-$trigger = New-ScheduledTaskTrigger -AtStartup
+$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$Ps1Path`""
+$bootTrigger = New-ScheduledTaskTrigger -AtStartup
+$logonTrigger = New-ScheduledTaskTrigger -AtLogOn
+foreach ($t in @($bootTrigger, $logonTrigger)) {
+    try { $t.Delay = 'PT0S' } catch { }
+}
 $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+$settings = New-ScheduledTaskSettingsSet `
+    -StartWhenAvailable `
+    -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries `
+    -DontStopOnIdleEnd `
+    -ExecutionTimeLimit (New-TimeSpan -Minutes 5) `
+    -MultipleInstances IgnoreNew
+try { $settings.Priority = 4 } catch { }
 
-Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger @($bootTrigger, $logonTrigger) -Principal $principal -Settings $settings -Force | Out-Null
 
 Write-Info 'Setting Windows to treat hardware clock as UTC (fixes Linux/Windows time mismatch)...'
 Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\TimeZoneInformation' -Name 'RealTimeIsUniversal' -Value 1 -Type DWord -Force
