@@ -14,7 +14,15 @@ if [ "$(id -u)" -ne 0 ]; then
   die "Run this with sudo: sudo bash ./install-linux.sh"
 fi
 
-ACTION="${1:-install}"
+ACTION="install"
+ACPI_S5=0
+for arg in "$@"; do
+  case "$arg" in
+    --acpi-s5) ACPI_S5=1 ;;
+    remove|uninstall|install) ACTION="$arg" ;;
+    *) die "Unknown argument: $arg (use install, remove, and optional --acpi-s5)" ;;
+  esac
+done
 SYSTEMCTL_PATH="$(command -v systemctl || die "systemctl command not found")"
 GSETTINGS_PATH="$(command -v gsettings || true)"
 
@@ -31,10 +39,10 @@ if [ -n "$CURRENT_USER" ] && [ "$CURRENT_USER" != "root" ]; then
   CURRENT_HOME="$(getent passwd "$CURRENT_USER" | cut -d: -f6 || true)"
 fi
 
-KEYBINDING_PATH="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/"
 KEYBINDING_NAME="OMEN Clean Shutdown"
 KEYBINDING_COMMAND="/usr/local/bin/omen-clean-shutdown-launcher"
 KEYBINDING_KEY="XF86Launch2"
+KEYBINDING_PATH=""
 
 source /etc/os-release 2>/dev/null || true
 if [ "${ID:-}" != "fedora" ] && [[ "${ID_LIKE:-}" != *fedora* ]] && \
@@ -201,9 +209,18 @@ fi
 REFIND_CONF="$REFIND_CONF_PATH"
 FLAG_FILE="$FLAG_FILE"
 RESTORE_FILE="$RESTORE_FILE"
+LOG_FILE="/var/log/omen-clean-shutdown.log"
 
-[ -f "\$REFIND_CONF" ] || { echo "Missing refind.conf: \$REFIND_CONF" >&2; exit 1; }
+log() { echo "\$(date -Is 2>/dev/null || date) \$*" >> "\$LOG_FILE" 2>/dev/null || true; }
+
+if [ -e /etc/omen-native-poweroff ]; then
+  log "native poweroff flag present; not intercepting"
+  exit 0
+fi
+
+[ -f "\$REFIND_CONF" ] || { echo "Missing refind.conf: \$REFIND_CONF" >&2; log "missing refind.conf"; exit 1; }
 mkdir -p "\$(dirname "\$FLAG_FILE")"
+log "starting Windows-reboot shutdown workaround"
 
 if [ ! -f "\${REFIND_CONF}.bak" ]; then
   cp -f "\$REFIND_CONF" "\${REFIND_CONF}.bak"
@@ -238,7 +255,8 @@ fi
 
 touch "\$FLAG_FILE"
 sync
-systemctl reboot
+log "flag written; rebooting into Windows"
+systemctl start reboot.target --job-mode=replace-irreversibly
 EOF
 
   cat >/usr/local/bin/omen-clean-shutdown-launcher <<EOF
@@ -310,10 +328,25 @@ EOF
   cat >/etc/systemd/system/omen-clean-shutdown.service <<'EOF'
 [Unit]
 Description=OMEN clean shutdown via Windows
+DefaultDependencies=no
+Conflicts=reboot.target
+Before=poweroff.target halt.target
+ConditionPathExists=!/etc/omen-native-poweroff
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/omen-clean-shutdown.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=poweroff.target halt.target
+EOF
+
+  mkdir -p /etc/systemd/system/poweroff.target.d
+  cat >/etc/systemd/system/poweroff.target.d/omen-clean-shutdown.conf <<'EOF'
+[Unit]
+Wants=omen-clean-shutdown.service
+After=omen-clean-shutdown.service
 EOF
 
   cat >/etc/systemd/system/refind-protect.service <<'EOF'
@@ -342,20 +375,51 @@ EOF
     fi
   fi
 
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [ -f "$SCRIPT_DIR/linux/omen-shutdown-diagnose.sh" ]; then
+    install -m 0755 "$SCRIPT_DIR/linux/omen-shutdown-diagnose.sh" /usr/local/bin/omen-shutdown-diagnose
+  fi
+  mkdir -p /usr/local/share/omen-clean-shutdown
+  if [ -f "$SCRIPT_DIR/acpi/ssdt-omen-s5.asl" ]; then
+    install -m 0644 "$SCRIPT_DIR/acpi/ssdt-omen-s5.asl" /usr/local/share/omen-clean-shutdown/ssdt-omen-s5.asl
+  fi
+
   systemctl daemon-reload
   systemctl enable refind-protect.service >/dev/null
+  systemctl enable omen-clean-shutdown.service >/dev/null
+
+  if [ "$ACPI_S5" -eq 1 ]; then
+    info "Experimental ACPI S5 template installed to /usr/local/share/omen-clean-shutdown/ssdt-omen-s5.asl"
+    info "This does NOT load AML automatically. Dump your DSDT, confirm PG00/GPTS paths, compile with iasl,"
+    info "and add a second bootloader entry. Keep the Windows-reboot workaround until S5 is proven (LED off, chassis cold)."
+    info "See README and https://github.com/paolo-de-marinis/omen-acpi/releases/tag/v2.2.0"
+  fi
 
   detect_keybinding
 
   if [ -n "$GSETTINGS_PATH" ] && [ -n "$CURRENT_USER" ] && [ "$CURRENT_USER" != "root" ]; then
-    info "Trying to bind key in GNOME..."
+    info "Trying to bind key in GNOME (without replacing existing custom shortcuts)..."
+    existing_raw="$(sudo -u "$CURRENT_USER" dbus-run-session -- gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings 2>/dev/null || echo '@as []')"
+    n=0
+    while printf '%s' "$existing_raw" | grep -q "custom${n}/"; do
+      n=$((n + 1))
+      if [ "$n" -gt 32 ]; then
+        break
+      fi
+    done
+    KEYBINDING_PATH="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom${n}/"
+    if printf '%s' "$existing_raw" | grep -q '@as \[\]' || [ "$existing_raw" = "[]" ]; then
+      listed="['$KEYBINDING_PATH']"
+    else
+      listed="$(printf '%s' "$existing_raw" | sed "s|]$|, '$KEYBINDING_PATH']|")"
+    fi
     if sudo -u "$CURRENT_USER" dbus-run-session -- sh -c "
-      gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings \"['$KEYBINDING_PATH']\" &&
+      gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings \"$listed\" &&
       gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$KEYBINDING_PATH name '$KEYBINDING_NAME' &&
       gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$KEYBINDING_PATH command '$KEYBINDING_COMMAND' &&
       gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$KEYBINDING_PATH binding '$KEYBINDING_KEY'
     " >/dev/null 2>&1; then
-      info "GNOME keybinding created for $KEYBINDING_KEY."
+      info "GNOME keybinding created at $KEYBINDING_PATH for $KEYBINDING_KEY."
     fi
   fi
 
@@ -375,6 +439,12 @@ EOF
   echo "  1. App launcher menu: search for 'OMEN Clean Shutdown'"
   echo "  2. Launcher command: omen-clean-shutdown-launcher"
   echo "  3. Keybinding ($KEYBINDING_KEY)"
+  echo "  4. Desktop/session Shut Down and systemctl poweroff (intercepted)"
+  echo
+  echo "Escape hatch (real firmware poweroff, may leave dGPU rail on):"
+  echo "  sudo touch /etc/omen-native-poweroff"
+  echo "Logs: /var/log/omen-clean-shutdown.log"
+  echo "Diagnose: sudo omen-shutdown-diagnose"
   echo
 }
 
@@ -382,14 +452,19 @@ remove_files() {
   info "Removing helper files..."
   ensure_efi_mounted
   systemctl stop omen-clean-shutdown.service 2>/dev/null || true
+  systemctl disable omen-clean-shutdown.service 2>/dev/null || true
   systemctl disable refind-protect.service 2>/dev/null || true
   rm -f /usr/local/bin/omen-clean-shutdown.sh
   rm -f /usr/local/bin/omen-clean-shutdown-launcher
   rm -f /usr/local/bin/refind-protect.sh
+  rm -f /usr/local/bin/omen-shutdown-diagnose
   rm -f /usr/share/applications/omen-clean-shutdown.desktop
   rm -f /etc/systemd/system/omen-clean-shutdown.service
   rm -f /etc/systemd/system/refind-protect.service
+  rm -f /etc/systemd/system/poweroff.target.d/omen-clean-shutdown.conf
+  rmdir /etc/systemd/system/poweroff.target.d 2>/dev/null || true
   rm -f /etc/sudoers.d/omen-clean-shutdown
+  rm -rf /usr/local/share/omen-clean-shutdown
   if [ -n "${REFIND_CONF_PATH:-}" ] && [ -f "${REFIND_CONF_PATH}.bak" ]; then
     cp -f "${REFIND_CONF_PATH}.bak" "$REFIND_CONF_PATH"
   fi
